@@ -1,0 +1,155 @@
+services:
+  # Frontend React Application
+  frontend:
+    build: 
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+      - REACT_APP_WS_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Backend FastAPI Application
+  backend:
+    build: 
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../uploads:/app/uploads
+      - ../output:/app/output
+      - ../logs:/app/logs
+      - /tmp:/tmp
+    environment:
+      - DEBUG=False
+      - REDIS_URL=redis://redis:6379
+      - TRANSLATION_SERVICE_URL=http://libretranslate:5000
+      - WHISPER_SERVICE_URL=http://whisper-service:5001
+      - TTS_SERVICE_URL=http://tts-service:5002
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/youtube_translator
+    depends_on:
+      - redis
+      - postgres
+      - libretranslate
+      - whisper-service
+      - tts-service
+    networks:
+      - app-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # Whisper Speech-to-Text Service
+  whisper-service:
+    build:
+      context: ../processing/whisper
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5001"
+    volumes:
+      - ../uploads:/app/uploads
+      - ../temp:/app/temp
+    environment:
+      - WHISPER_MODEL=medium
+      - WHISPER_DEVICE=cpu
+    networks:
+      - app-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+        reservations:
+          memory: 3G
+
+  # TTS Service
+  tts-service:
+    build:
+      context: ../processing/tts
+      dockerfile: Dockerfile
+    ports:
+      - "5002:5002"
+    volumes:
+      - ../uploads:/app/uploads
+      - ../output:/app/output
+    environment:
+      - TTS_MODEL=tts_models/th/mai_female/glow-tts
+      - TTS_DEVICE=cpu
+    networks:
+      - app-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+
+  # LibreTranslate Service
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - LT_CHAR_LIMIT=25000
+      - LT_REQ_LIMIT=200
+      - LT_BATCH_LIMIT=20
+      - LT_THREADS=4
+      - LT_FRONTEND_LANGUAGE_SOURCE=auto
+      - LT_FRONTEND_LANGUAGE_TARGET=th
+    networks:
+      - app-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
+
+  # Redis for caching and task queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=youtube_translator
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge

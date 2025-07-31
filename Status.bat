@@ -1,0 +1,112 @@
+@echo off
+chcp 65001 >nul
+
+echo.
+echo ==========================================
+echo    สถานะ YouTube Video Translator
+echo ==========================================
+echo.
+
+echo [INFO] ตรวจสอบ Docker...
+docker info >nul 2>&1
+if %errorLevel% neq 0 (
+    echo [ERROR] Docker ไม่ได้เริ่มต้นการทำงาน
+    goto :docker_error
+)
+
+echo [SUCCESS] Docker กำลังทำงาน
+echo.
+
+echo สถานะ Containers:
+echo ==================
+cd docker
+
+docker-compose --version >nul 2>&1
+if %errorLevel% neq 0 (
+    docker compose -f docker-compose-simple.yml ps
+) else (
+    docker-compose -f docker-compose-simple.yml ps
+)
+
+cd ..
+echo.
+
+echo สถานะบริการ:
+echo =============
+
+:: ตรวจสอบ Backend
+echo | set /p="Backend API:       "
+curl -f http://localhost:8000/health >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: ตรวจสอบ Frontend
+echo | set /p="Frontend:          "
+curl -f http://localhost:3000 >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: ตรวจสอบ Translation Service
+echo | set /p="Translation API:   "
+curl -f http://localhost:5000/languages >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: ตรวจสอบ Whisper Service
+echo | set /p="Whisper Service:   "
+curl -f http://localhost:5001/health >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: ตรวจสอบ TTS Service
+echo | set /p="TTS Service:       "
+curl -f http://localhost:5002/health >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: ตรวจสอบ Redis
+echo | set /p="Redis:             "
+curl -f http://localhost:6379 >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [32m✓ ทำงานปกติ[0m
+) else (
+    echo [31m✗ ไม่ตอบสนอง[0m
+)
+
+echo.
+echo เว็บไซต์:
+echo =========
+echo   Frontend:           http://localhost:3000
+echo   API Documentation:  http://localhost:8000/docs
+echo   Translation API:    http://localhost:5000
+echo   Celery Monitor:     http://localhost:5555
+echo.
+
+goto :end
+
+:docker_error
+echo [ERROR] Docker ไม่ได้เริ่มต้นการทำงาน
+echo.
+echo วิธีแก้ไข:
+echo 1. เปิด Docker Desktop
+echo 2. รอให้ Docker เริ่มต้นการทำงาน (ดูไอคอนใน system tray)
+echo 3. รันสคริปต์นี้อีกครั้ง
+echo.
+
+:end
+pause

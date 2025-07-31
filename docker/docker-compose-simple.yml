@@ -1,0 +1,88 @@
+services:
+  # Backend FastAPI Application
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../uploads:/app/uploads
+      - ../output:/app/output
+      - ../logs:/app/logs
+    environment:
+      - DEBUG=True
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/youtube_translator
+      - TRANSLATION_SERVICE_URL=http://libretranslate:5000
+    depends_on:
+      - redis
+      - postgres
+      - libretranslate
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Frontend React Application
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # LibreTranslate Service (Translation API)
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - LT_CHAR_LIMIT=0  # ไม่จำกัดความยาว
+      - LT_REQ_LIMIT=500  # เพิ่มจำนวน request
+      - LT_BATCH_LIMIT=100  # เพิ่ม batch limit
+      - LT_THREADS=8  # เพิ่มจำนวน threads
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # Redis for caching and task queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=youtube_translator
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
