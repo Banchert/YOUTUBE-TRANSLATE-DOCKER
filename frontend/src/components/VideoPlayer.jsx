@@ -1,11 +1,11 @@
 // VideoPlayer component with language information
 import React from 'react';
 
-export default function VideoPlayer({ 
-  originalUrl, 
-  processedVideo, 
+export default function VideoPlayer({
+  originalUrl,
+  processedVideo,
   sourceLanguage = 'auto',
-  targetLanguage = 'th' 
+  targetLanguage = 'th'
 }) {
   // ฟังก์ชันสำหรับแปลงรหัสภาษาเป็นชื่อภาษา
   const getLanguageName = (code) => {
@@ -17,112 +17,146 @@ export default function VideoPlayer({
       'ja': '🇯🇵 ญี่ปุ่น',
       'ko': '🇰🇷 เกาหลี',
       'vi': '🇻🇳 เวียดนาม',
+      'la': '🇱🇦 ลาว',
       'id': '🇮🇩 อินโดนีเซีย',
-      'ms': '🇲🇾 มาเลเซีย',
-      'lo': '🇱🇦 ลาว',
+      'my': '🇲🇾 มาเลเซีย',
       'es': '🇪🇸 สเปน',
       'fr': '🇫🇷 ฝรั่งเศส',
       'de': '🇩🇪 เยอรมัน',
       'it': '🇮🇹 อิตาลี',
       'pt': '🇵🇹 โปรตุเกส',
       'ru': '🇷🇺 รัสเซีย',
-      'ar': '🇸🇦 อาหรับ',
-      'hi': '🇮🇳 ฮินดี',
-      'tr': '🇹🇷 ตุรกี'
+      'ar': '🇸🇦 อาหรับ'
     };
     return languageMap[code] || code;
   };
 
-  return (
-    <div className="bg-white p-6 rounded-lg shadow-lg border border-gray-200">
-      <div className="mb-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-2">
-          🎬 ผลลัพธ์การแปลวิดีโอ
-        </h2>
-        <p className="text-gray-600">
-          วิดีโอที่แปลจาก {getLanguageName(sourceLanguage)} เป็น {getLanguageName(targetLanguage)}
-        </p>
-      </div>
+  // ฟังก์ชันสำหรับแปลง YouTube URL เป็น embed URL
+  const getYouTubeEmbedUrl = (url) => {
+    const videoId = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/);
+    return videoId ? `https://www.youtube.com/embed/${videoId[1]}` : null;
+  };
 
-      {/* Language Information */}
-      <div className="mb-6 p-4 bg-green-50 rounded-lg">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div>
-              <span className="text-sm font-medium text-gray-600">จาก:</span>
-              <span className="ml-2 text-lg">{getLanguageName(sourceLanguage)}</span>
+  const embedUrl = getYouTubeEmbedUrl(originalUrl);
+
+  return (
+    <div className="bg-white rounded-lg shadow-lg p-6">
+      <div className="mb-6">
+        <h3 className="text-xl font-bold text-gray-800 mb-4">Video Player</h3>
+        
+        {/* Language Information */}
+        <div className="bg-blue-50 rounded-lg p-4 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div>
+                <span className="text-sm text-gray-600">จาก:</span>
+                <span className="ml-2 font-medium">{getLanguageName(sourceLanguage)}</span>
+              </div>
+              <div className="text-gray-400">→</div>
+              <div>
+                <span className="text-sm text-gray-600">เป็น:</span>
+                <span className="ml-2 font-medium">{getLanguageName(targetLanguage)}</span>
+              </div>
             </div>
-            <div className="text-green-500">
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
-            </div>
-            <div>
-              <span className="text-sm font-medium text-gray-600">เป็น:</span>
-              <span className="ml-2 text-lg">{getLanguageName(targetLanguage)}</span>
-            </div>
-          </div>
-          <div className="text-green-600">
-            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-            </svg>
           </div>
         </div>
-      </div>
 
-      {/* Video Player */}
-      <div className="mb-6">
-        <div className="aspect-video bg-gray-100 rounded-lg flex items-center justify-center">
-          {processedVideo ? (
-            <video 
-              controls 
-              className="w-full h-full rounded-lg"
-              src={processedVideo.url}
-            >
-              Your browser does not support the video tag.
-            </video>
+        {/* Original Video */}
+        <div className="mb-6">
+          <h4 className="text-lg font-semibold text-gray-700 mb-3">วิดีโอต้นฉบับ</h4>
+          {embedUrl ? (
+            <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden">
+              <iframe
+                className="w-full h-full"
+                src={embedUrl}
+                title="Original YouTube Video"
+                frameBorder="0"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              ></iframe>
+            </div>
           ) : (
-            <div className="text-center text-gray-500">
-              <svg className="w-16 h-16 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <p>วิดีโอต้นฉบับ</p>
-              <p className="text-sm">(ยังไม่มีการแปล)</p>
+            <div className="bg-gray-100 rounded-lg p-8 text-center">
+              <p className="text-gray-500">ไม่สามารถแสดงวิดีโอได้</p>
+              <p className="text-sm text-gray-400 mt-2">{originalUrl}</p>
             </div>
           )}
         </div>
-      </div>
 
-      {/* Download Section */}
-      {processedVideo && (
-        <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-          <h3 className="text-lg font-medium text-gray-800 mb-3">
-            📥 ดาวน์โหลดผลลัพธ์
-          </h3>
-          <div className="space-y-2">
-            <button className="w-full bg-blue-600 text-white py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
-              🎬 ดาวน์โหลดวิดีโอที่แปลแล้ว
-            </button>
-            <button className="w-full bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 transition-colors">
-              📝 ดาวน์โหลดซับไตเติล
-            </button>
-            <button className="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors">
-              🔊 ดาวน์โหลดไฟล์เสียง
-            </button>
+        {/* Processed Video */}
+        {processedVideo && (
+          <div className="mb-6">
+            <h4 className="text-lg font-semibold text-gray-700 mb-3">วิดีโอที่แปลแล้ว</h4>
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <div className="flex items-center">
+                <svg className="w-5 h-5 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                <span className="font-medium text-green-800">การแปลเสร็จสิ้น</span>
+              </div>
+            </div>
+            
+            <div className="aspect-video bg-gray-100 rounded-lg overflow-hidden">
+              <video
+                className="w-full h-full"
+                controls
+                preload="metadata"
+              >
+                <source src={processedVideo.video_url} type="video/mp4" />
+                Your browser does not support the video tag.
+              </video>
+            </div>
+
+            {/* Video Controls */}
+            <div className="mt-4 flex space-x-3">
+              <button
+                onClick={() => {
+                  const video = document.querySelector('video');
+                  if (video) video.play();
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 flex items-center"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                เล่นวิดีโอ
+              </button>
+              
+              <button
+                onClick={() => {
+                  const video = document.querySelector('video');
+                  if (video) video.pause();
+                }}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 flex items-center"
+              >
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                หยุด
+              </button>
+            </div>
+
+            {/* Video Information */}
+            <div className="mt-4 bg-gray-50 rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-600">Task ID:</span>
+                  <span className="ml-2 font-mono text-gray-800">{processedVideo.task_id}</span>
+                </div>
+                <div>
+                  <span className="text-gray-600">สถานะ:</span>
+                  <span className="ml-2 text-green-600 font-medium">เสร็จสิ้น</span>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Original Video Link */}
-      <div className="text-center">
-        <a 
-          href={originalUrl} 
-          target="_blank" 
-          rel="noopener noreferrer"
-          className="text-blue-600 hover:text-blue-800 text-sm underline"
-        >
-          👁️ ดูวิดีโอต้นฉบับบน YouTube
-        </a>
+        {/* Original URL Info */}
+        <div className="bg-gray-50 rounded-lg p-4">
+          <h5 className="font-medium text-gray-700 mb-2">ข้อมูลวิดีโอ</h5>
+          <p className="text-sm text-gray-600 break-all">{originalUrl}</p>
+        </div>
       </div>
     </div>
   );

@@ -62,16 +62,17 @@ services:
       - ../temp:/app/temp
     environment:
       - WHISPER_MODEL=medium
-      - WHISPER_DEVICE=cpu
+      - WHISPER_DEVICE=cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       - app-network
     restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 6G
-        reservations:
-          memory: 3G
 
   # TTS Service
   tts-service:

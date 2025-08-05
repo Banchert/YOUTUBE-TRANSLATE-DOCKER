@@ -21,12 +21,19 @@ echo สถานะ Containers:
 echo ==================
 cd docker
 
-docker-compose --version >nul 2>&1
-if %errorLevel% neq 0 (
-    docker compose -f docker-compose-simple.yml ps
+:: ตรวจสอบว่าใช้ docker-compose.yml หรือ docker-compose-simple.yml
+docker compose -f docker-compose.yml ps >nul 2>&1
+if %errorLevel% equ 0 (
+    echo [INFO] ใช้การตั้งค่าแบบเต็ม (Full Setup)
+    set "COMPOSE_FILE=docker-compose.yml"
+    set "FULL_SETUP=true"
 ) else (
-    docker-compose -f docker-compose-simple.yml ps
+    echo [INFO] ใช้การตั้งค่าแบบง่าย (Simple Setup)
+    set "COMPOSE_FILE=docker-compose-simple.yml"
+    set "FULL_SETUP=false"
 )
+
+docker compose -f %COMPOSE_FILE% ps
 
 cd ..
 echo.
@@ -54,34 +61,39 @@ if %errorLevel% equ 0 (
 
 :: ตรวจสอบ Translation Service
 echo | set /p="Translation API:   "
-curl -f http://localhost:5000/languages >nul 2>&1
+timeout /t 1 /nobreak >nul 2>&1
+powershell -Command "Test-NetConnection -ComputerName localhost -Port 5000 -InformationLevel Quiet" >nul 2>&1
 if %errorLevel% equ 0 (
     echo [32m✓ ทำงานปกติ[0m
 ) else (
     echo [31m✗ ไม่ตอบสนอง[0m
 )
 
-:: ตรวจสอบ Whisper Service
-echo | set /p="Whisper Service:   "
-curl -f http://localhost:5001/health >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
-) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+:: ตรวจสอบ Whisper Service (เฉพาะ Full Setup)
+if "%FULL_SETUP%"=="true" (
+    echo | set /p="Whisper Service:   "
+    curl -f http://localhost:5001/health >nul 2>&1
+    if %errorLevel% equ 0 (
+        echo [32m✓ ทำงานปกติ[0m
+    ) else (
+        echo [31m✗ ไม่ตอบสนอง[0m
+    )
 )
 
-:: ตรวจสอบ TTS Service
-echo | set /p="TTS Service:       "
-curl -f http://localhost:5002/health >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
-) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+:: ตรวจสอบ TTS Service (เฉพาะ Full Setup)
+if "%FULL_SETUP%"=="true" (
+    echo | set /p="TTS Service:       "
+    curl -f http://localhost:5002/health >nul 2>&1
+    if %errorLevel% equ 0 (
+        echo [32m✓ ทำงานปกติ[0m
+    ) else (
+        echo [31m✗ ไม่ตอบสนอง[0m
+    )
 )
 
-:: ตรวจสอบ Redis
+:: ตรวจสอบ Redis (ใช้ redis-cli แทน curl)
 echo | set /p="Redis:             "
-curl -f http://localhost:6379 >nul 2>&1
+docker exec docker-redis-1 redis-cli ping >nul 2>&1
 if %errorLevel% equ 0 (
     echo [32m✓ ทำงานปกติ[0m
 ) else (

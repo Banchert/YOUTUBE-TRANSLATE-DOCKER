@@ -1,591 +1,331 @@
-// frontend/src/services/api.js
-import axios from 'axios';
-
+// API Service for YouTube Video Translator
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const WS_URL = process.env.REACT_APP_WS_URL || 'http://localhost:8000';
 
 class ApiService {
   constructor() {
-    this.client = axios.create({
-      baseURL: API_BASE_URL,
-      timeout: 30000,
+    this.baseURL = API_BASE_URL;
+    this.wsURL = WS_URL;
+  }
+
+  // Helper method for API calls
+  async request(endpoint, options = {}) {
+    const url = `${this.baseURL}${endpoint}`;
+    const defaultHeaders = {
+      'Content-Type': 'application/json',
+    };
+
+    const config = {
+      ...options,
       headers: {
-        'Content-Type': 'application/json',
+        ...defaultHeaders,
+        ...options.headers,
       },
-    });
+    };
 
-    // Request interceptor
-    this.client.interceptors.request.use(
-      (config) => {
-        console.log(`Making ${config.method.toUpperCase()} request to ${config.url}`);
-        return config;
-      },
-      (error) => {
-        return Promise.reject(error);
+    try {
+      const response = await fetch(url, config);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-    );
 
-    // Response interceptor
-    this.client.interceptors.response.use(
-      (response) => {
-        return response.data;
-      },
-      (error) => {
-        const message = error.response?.data?.detail || 
-                      error.response?.data?.message || 
-                      error.message || 
-                      'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ';
-        
-        console.error('API Error:', {
-          status: error.response?.status,
-          message,
-          url: error.config?.url
-        });
-
-        throw new Error(message);
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        return await response.json();
       }
-    );
+      
+      return response;
+    } catch (error) {
+      console.error(`API request failed: ${endpoint}`, error);
+      throw error;
+    }
   }
 
   // Health check
   async healthCheck() {
-    return this.client.get('/health');
+    return this.request('/health');
   }
 
-  // Process video
-  async processVideo(data) {
-    return this.client.post('/process-video/', data);
+  // Start translation task
+  async startTranslation(data) {
+    return this.request('/translate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   // Get task status
   async getTaskStatus(taskId) {
-    return this.client.get(`/status/${taskId}`);
-  }
-
-  // Download result
-  async downloadResult(taskId) {
-    return this.client.get(`/download/${taskId}`, {
-      responseType: 'blob'
-    });
+    return this.request(`/tasks/${taskId}`);
   }
 
   // Cancel task
   async cancelTask(taskId) {
-    return this.client.delete(`/task/${taskId}`);
+    return this.request(`/tasks/${taskId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  // Get task history
+  async getTaskHistory(limit = 10) {
+    return this.request(`/tasks?limit=${limit}`);
+  }
+
+  // Download file
+  async downloadFile(fileUrl, filename) {
+    try {
+      console.log(`Starting download from: ${fileUrl}`);
+      
+      const response = await fetch(fileUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Download failed: HTTP ${response.status} - ${response.statusText}`);
+      }
+      
+      // Check if we got actual content
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength) < 100) {
+        console.warn('File seems too small, might be a placeholder');
+      }
+      
+      const blob = await response.blob();
+      
+      // Check blob size
+      if (blob.size < 100) {
+        console.warn(`Downloaded file is very small (${blob.size} bytes), might be a placeholder`);
+      }
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      
+      // Add to DOM, click, and cleanup
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      console.log(`Download completed: ${filename} (${blob.size} bytes)`);
+      return true;
+      
+    } catch (error) {
+      console.error('Download failed:', error);
+      
+      // Provide more specific error messages
+      if (error.message.includes('404')) {
+        throw new Error('ไฟล์ไม่พบ - อาจยังไม่เสร็จสิ้นการประมวลผล');
+      } else if (error.message.includes('403')) {
+        throw new Error('ไม่มีสิทธิ์เข้าถึงไฟล์');
+      } else if (error.message.includes('500')) {
+        throw new Error('เซิร์ฟเวอร์เกิดข้อผิดพลาด');
+      } else if (error.message.includes('Failed to fetch')) {
+        throw new Error('ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้');
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  // Get download URL
+  getDownloadUrl(taskId, type) {
+    const endpoints = {
+      video: `/download/${taskId}/video`,
+      audio: `/download/${taskId}/audio`,
+      subtitle: `/download/${taskId}/subtitle`,
+    };
+    
+    return `${this.baseURL}${endpoints[type] || endpoints.video}`;
+  }
+
+  // Upload video file
+  async uploadVideo(file, onProgress = null) {
+    const formData = new FormData();
+    formData.append('video', file);
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      // Set timeout (5 minutes for large files)
+      xhr.timeout = 5 * 60 * 1000; // 5 minutes
+
+      if (onProgress) {
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) {
+            const percentComplete = (event.loaded / event.total) * 100;
+            onProgress(percentComplete);
+          }
+        });
+      }
+
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const response = JSON.parse(xhr.responseText);
+            console.log('Upload successful:', response);
+            resolve(response);
+          } catch (error) {
+            console.error('Invalid JSON response:', xhr.responseText);
+            reject(new Error('Invalid server response'));
+          }
+        } else {
+          let errorMessage = `Upload failed: HTTP ${xhr.status}`;
+          try {
+            const errorResponse = JSON.parse(xhr.responseText);
+            if (errorResponse.detail) {
+              errorMessage = errorResponse.detail;
+            }
+          } catch (e) {
+            // Use default error message if can't parse response
+          }
+          
+          console.error('Upload failed:', xhr.status, xhr.responseText);
+          reject(new Error(errorMessage));
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        console.error('Upload network error');
+        reject(new Error('Network error - ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้'));
+      });
+
+      xhr.addEventListener('timeout', () => {
+        console.error('Upload timeout');
+        reject(new Error('Upload timeout - ไฟล์ใหญ่เกินไปหรือการเชื่อมต่อช้า'));
+      });
+
+      xhr.addEventListener('abort', () => {
+        console.error('Upload aborted');
+        reject(new Error('Upload aborted - การอัปโหลดถูกยกเลิก'));
+      });
+
+      try {
+        xhr.open('POST', `${this.baseURL}/upload`);
+        xhr.send(formData);
+      } catch (error) {
+        console.error('Upload setup error:', error);
+        reject(new Error('Upload setup failed - ไม่สามารถเริ่มการอัปโหลดได้'));
+      }
+    });
   }
 
   // Get supported languages
   async getSupportedLanguages() {
-    return this.client.get('/languages');
+    return this.request('/languages');
   }
 
-  // Get processing statistics
+  // Get statistics
   async getStatistics() {
-    return this.client.get('/statistics');
+    return this.request('/stats');
+  }
+
+  // Create share link
+  async createShareLink(taskId) {
+    return this.request('/share', {
+      method: 'POST',
+      body: JSON.stringify({ task_id: taskId }),
+    });
+  }
+
+  // WebSocket connection for real-time updates
+  connectWebSocket(taskId, callbacks = {}) {
+    const wsUrl = `${this.wsURL.replace('http', 'ws')}/ws/${taskId}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      if (callbacks.onOpen) callbacks.onOpen();
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (callbacks.onMessage) callbacks.onMessage(data);
+      } catch (error) {
+        console.error('WebSocket message parse error:', error);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      if (callbacks.onClose) callbacks.onClose();
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      if (callbacks.onError) callbacks.onError(error);
+    };
+
+    return ws;
+  }
+
+  // Mock data for development (remove in production)
+  async getMockTaskProgress(taskId) {
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const mockProgresses = [
+      { step: 'download', progress: 100, message: 'วิดีโอดาวน์โหลดเสร็จแล้ว' },
+      { step: 'extract', progress: 100, message: 'แยกเสียงเสร็จแล้ว' },
+      { step: 'transcribe', progress: 75, message: 'กำลังแปลงเสียงเป็นข้อความ...' },
+      { step: 'translate', progress: 0, message: 'รอการแปลข้อความ' },
+      { step: 'synthesize', progress: 0, message: 'รอการสังเคราะห์เสียง' },
+      { step: 'merge', progress: 0, message: 'รอการรวมไฟล์' },
+    ];
+
+    return {
+      task_id: taskId,
+      status: 'processing',
+      current_step: 'transcribe',
+      progress: mockProgresses,
+      estimated_time_remaining: 300, // seconds
+    };
+  }
+
+  async getMockTaskResult(taskId) {
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    return {
+      task_id: taskId,
+      status: 'completed',
+      source_language: 'en',
+      target_language: 'th',
+      video_url: `${this.baseURL}/static/translated_video_${taskId}.mp4`,
+      audio_url: `${this.baseURL}/static/translated_audio_${taskId}.mp3`,
+      subtitle_url: `${this.baseURL}/static/subtitles_${taskId}.srt`,
+      original_duration: 930, // seconds
+      file_sizes: {
+        video: 157286400, // bytes
+        audio: 14876800,
+        subtitle: 2048,
+      },
+      created_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+    };
   }
 }
 
-export const apiService = new ApiService();
+// Export singleton instance
+const apiService = new ApiService();
+export default apiService;
 
-// ===== Hooks =====
-
-// frontend/src/hooks/useWebSocket.js
-import { useState, useEffect, useRef } from 'react';
-import io from 'socket.io-client';
-
-export const useWebSocket = (url) => {
-  const [socket, setSocket] = useState(null);
-  const [lastMessage, setLastMessage] = useState(null);
-  const [connectionStatus, setConnectionStatus] = useState('Connecting');
-
-  useEffect(() => {
-    const socketUrl = process.env.REACT_APP_WS_URL || 'http://localhost:8000';
-    const newSocket = io(socketUrl + url);
-
-    newSocket.on('connect', () => {
-      console.log('WebSocket connected');
-      setConnectionStatus('Open');
-      setSocket(newSocket);
-    });
-
-    newSocket.on('disconnect', () => {
-      console.log('WebSocket disconnected');
-      setConnectionStatus('Closed');
-    });
-
-    newSocket.on('message', (data) => {
-      setLastMessage({ data: JSON.stringify(data) });
-    });
-
-    newSocket.on('error', (error) => {
-      console.error('WebSocket error:', error);
-      setConnectionStatus('Error');
-    });
-
-    return () => {
-      newSocket.close();
-    };
-  }, [url]);
-
-  return { socket, lastMessage, connectionStatus };
-};
-
-// frontend/src/hooks/useLocalStorage.js
-import { useState, useEffect } from 'react';
-
-export const useLocalStorage = (key, initialValue) => {
-  const [storedValue, setStoredValue] = useState(() => {
-    try {
-      const item = window.localStorage.getItem(key);
-      return item ? JSON.parse(item) : initialValue;
-    } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
-      return initialValue;
-    }
-  });
-
-  const setValue = (value) => {
-    try {
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(valueToStore);
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
-    } catch (error) {
-      console.error(`Error setting localStorage key "${key}":`, error);
-    }
-  };
-
-  return [storedValue, setValue];
-};
-
-// frontend/src/hooks/useAsync.js
-import { useState, useEffect, useCallback } from 'react';
-
-export const useAsync = (asyncFunction, immediate = true) => {
-  const [status, setStatus] = useState('idle');
-  const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-
-  const execute = useCallback(async (...args) => {
-    setStatus('pending');
-    setData(null);
-    setError(null);
-
-    try {
-      const response = await asyncFunction(...args);
-      setData(response);
-      setStatus('success');
-      return response;
-    } catch (error) {
-      setError(error);
-      setStatus('error');
-      throw error;
-    }
-  }, [asyncFunction]);
-
-  useEffect(() => {
-    if (immediate) {
-      execute();
-    }
-  }, [execute, immediate]);
-
-  return { execute, status, data, error };
-};
-
-// frontend/src/store/appStore.js
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-
-export const useAppStore = create(
-  persist(
-    (set, get) => ({
-      // Current processing task
-      currentTask: null,
-      setCurrentTask: (task) => set({ currentTask: task }),
-      clearCurrentTask: () => set({ currentTask: null }),
-
-      // Processing history
-      processingHistory: [],
-      addToHistory: (task) => set((state) => ({
-        processingHistory: [task, ...state.processingHistory.slice(0, 49)] // Keep last 50
-      })),
-      updateHistoryItem: (taskId, updates) => set((state) => ({
-        processingHistory: state.processingHistory.map(item =>
-          item.task_id === taskId ? { ...item, ...updates } : item
-        )
-      })),
-      removeFromHistory: (taskId) => set((state) => ({
-        processingHistory: state.processingHistory.filter(item => item.task_id !== taskId)
-      })),
-      clearHistory: () => set({ processingHistory: [] }),
-
-      // User preferences
-      preferences: {
-        defaultLanguage: 'th',
-        defaultMixingMode: 'overlay',
-        defaultVoiceType: 'female',
-        autoDownload: false,
-        notifications: true
-      },
-      updatePreferences: (newPrefs) => set((state) => ({
-        preferences: { ...state.preferences, ...newPrefs }
-      })),
-
-      // UI state
-      sidebarOpen: false,
-      setSidebarOpen: (open) => set({ sidebarOpen: open }),
-      
-      darkMode: false,
-      setDarkMode: (dark) => set({ darkMode: dark }),
-
-      // Statistics
-      statistics: {
-        totalProcessed: 0,
-        totalSuccessful: 0,
-        totalFailed: 0,
-        averageProcessingTime: 0
-      },
-      updateStatistics: (stats) => set({ statistics: stats }),
-
-      // Computed getters
-      getTaskById: (taskId) => {
-        const state = get();
-        return state.processingHistory.find(task => task.task_id === taskId);
-      },
-
-      getCompletedTasks: () => {
-        const state = get();
-        return state.processingHistory.filter(task => task.status === 'completed');
-      },
-
-      getFailedTasks: () => {
-        const state = get();
-        return state.processingHistory.filter(task => task.status === 'failed');
-      },
-
-      getProcessingTasks: () => {
-        const state = get();
-        return state.processingHistory.filter(task => 
-          task.status === 'processing' || task.status === 'queued'
-        );
-      }
-    }),
-    {
-      name: 'youtube-translator-storage',
-      partialize: (state) => ({
-        processingHistory: state.processingHistory,
-        preferences: state.preferences,
-        statistics: state.statistics
-      })
-    }
-  )
-);
-
-// frontend/src/components/Header.jsx
-import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import { 
-  HomeIcon, 
-  ClockIcon, 
-  Cog6ToothIcon,
-  BellIcon 
-} from '@heroicons/react/24/outline';
-
-import { useAppStore } from '../store/appStore';
-
-const Header = () => {
-  const location = useLocation();
-  const { processingHistory, getProcessingTasks } = useAppStore();
-  const activeTasks = getProcessingTasks();
-
-  const navigation = [
-    { name: 'หน้าหลัก', href: '/', icon: HomeIcon },
-    { name: 'ประวัติ', href: '/history', icon: ClockIcon },
-    { name: 'การตั้งค่า', href: '/settings', icon: Cog6ToothIcon },
-  ];
-
-  return (
-    <header className="bg-white shadow-sm border-b border-gray-200">
-      <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo */}
-          <Link to="/" className="flex items-center space-x-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">YT</span>
-            </div>
-            <span className="text-xl font-bold text-gray-800">
-              Video Translator
-            </span>
-          </Link>
-
-          {/* Navigation */}
-          <nav className="hidden md:flex space-x-8">
-            {navigation.map((item) => {
-              const Icon = item.icon;
-              const isActive = location.pathname === item.href;
-              
-              return (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  className={`flex items-center space-x-2 px-3 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'text-blue-600 bg-blue-50'
-                      : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  <span className="font-medium">{item.name}</span>
-                  {item.href === '/history' && processingHistory.length > 0 && (
-                    <span className="bg-blue-100 text-blue-600 text-xs font-medium px-2 py-1 rounded-full">
-                      {processingHistory.length}
-                    </span>
-                  )}
-                </Link>
-              );
-            })}
-          </nav>
-
-          {/* Status & Notifications */}
-          <div className="flex items-center space-x-4">
-            {/* Active Tasks Indicator */}
-            {activeTasks.length > 0 && (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="flex items-center space-x-2 bg-blue-50 text-blue-600 px-3 py-1 rounded-full"
-              >
-                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                <span className="text-sm font-medium">
-                  {activeTasks.length} งานกำลังประมวลผล
-                </span>
-              </motion.div>
-            )}
-
-            {/* Notifications */}
-            <button className="relative p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg transition-colors">
-              <BellIcon className="w-5 h-5" />
-              {activeTasks.length > 0 && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full" />
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    </header>
-  );
-};
-
-export default Header;
-
-// frontend/src/components/HistoryPage.jsx
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { 
-  TrashIcon, 
-  ArrowDownTrayIcon,
-  EyeIcon,
-  ClockIcon
-} from '@heroicons/react/24/outline';
-
-import { useAppStore } from '../store/appStore';
-
-const HistoryPage = () => {
-  const { 
-    processingHistory, 
-    removeFromHistory, 
-    clearHistory,
-    getCompletedTasks,
-    getFailedTasks 
-  } = useAppStore();
-  
-  const [filter, setFilter] = useState('all');
-  const [sortBy, setSortBy] = useState('newest');
-
-  const filteredHistory = processingHistory.filter(task => {
-    if (filter === 'completed') return task.status === 'completed';
-    if (filter === 'failed') return task.status === 'failed';
-    if (filter === 'processing') return ['processing', 'queued'].includes(task.status);
-    return true;
-  });
-
-  const sortedHistory = [...filteredHistory].sort((a, b) => {
-    if (sortBy === 'newest') return new Date(b.created_at) - new Date(a.created_at);
-    if (sortBy === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
-    return 0;
-  });
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'completed': return 'text-green-600 bg-green-50';
-      case 'failed': return 'text-red-600 bg-red-50';
-      case 'processing': return 'text-blue-600 bg-blue-50';
-      case 'queued': return 'text-yellow-600 bg-yellow-50';
-      default: return 'text-gray-600 bg-gray-50';
-    }
-  };
-
-  const getStatusText = (status) => {
-    switch (status) {
-      case 'completed': return 'เสร็จแล้ว';
-      case 'failed': return 'ล้มเหลว';
-      case 'processing': return 'กำลังประมวลผล';
-      case 'queued': return 'รอคิว';
-      default: return status;
-    }
-  };
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="max-w-6xl mx-auto"
-    >
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800 mb-2">ประวัติการประมวลผล</h1>
-        <p className="text-gray-600">
-          ดูและจัดการประวัติการแปลวิดีโอของคุณ
-        </p>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <div className="bg-white p-6 rounded-xl shadow-lg">
-          <div className="text-2xl font-bold text-blue-600">{processingHistory.length}</div>
-          <div className="text-sm text-gray-600">ทั้งหมด</div>
-        </div>
-        <div className="bg-white p-6 rounded-xl shadow-lg">
-          <div className="text-2xl font-bold text-green-600">{getCompletedTasks().length}</div>
-          <div className="text-sm text-gray-600">สำเร็จ</div>
-        </div>
-        <div className="bg-white p-6 rounded-xl shadow-lg">
-          <div className="text-2xl font-bold text-red-600">{getFailedTasks().length}</div>
-          <div className="text-sm text-gray-600">ล้มเหลว</div>
-        </div>
-        <div className="bg-white p-6 rounded-xl shadow-lg">
-          <div className="text-2xl font-bold text-purple-600">
-            {processingHistory.length > 0 
-              ? Math.round((getCompletedTasks().length / processingHistory.length) * 100)
-              : 0}%
-          </div>
-          <div className="text-sm text-gray-600">อัตราสำเร็จ</div>
-        </div>
-      </div>
-
-      {/* Filters and Controls */}
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center space-x-4">
-            <select 
-              value={filter} 
-              onChange={(e) => setFilter(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2"
-            >
-              <option value="all">ทั้งหมด</option>
-              <option value="completed">เสร็จแล้ว</option>
-              <option value="processing">กำลังประมวลผล</option>
-              <option value="failed">ล้มเหลว</option>
-            </select>
-
-            <select 
-              value={sortBy} 
-              onChange={(e) => setSortBy(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2"
-            >
-              <option value="newest">ใหม่สุด</option>
-              <option value="oldest">เก่าสุด</option>
-            </select>
-          </div>
-
-          <button
-            onClick={clearHistory}
-            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors"
-          >
-            ลบทั้งหมด
-          </button>
-        </div>
-      </div>
-
-      {/* History List */}
-      <div className="space-y-4">
-        {sortedHistory.length === 0 ? (
-          <div className="bg-white rounded-xl shadow-lg p-12 text-center">
-            <ClockIcon className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-800 mb-2">ยังไม่มีประวัติ</h3>
-            <p className="text-gray-600">เริ่มแปลวิดีโอแรกของคุณได้เลย!</p>
-          </div>
-        ) : (
-          sortedHistory.map((task, index) => (
-            <motion.div
-              key={task.task_id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="bg-white rounded-xl shadow-lg p-6 hover:shadow-xl transition-shadow"
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center space-x-3 mb-2">
-                    <h3 className="font-semibold text-gray-800 truncate">
-                      {task.youtube_url}
-                    </h3>
-                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(task.status)}`}>
-                      {getStatusText(task.status)}
-                    </span>
-                  </div>
-                  
-                  <div className="flex items-center space-x-4 text-sm text-gray-600">
-                    <span>📅 {new Date(task.created_at).toLocaleDateString('th-TH')}</span>
-                    <span>🌐 {task.target_language?.toUpperCase()}</span>
-                    <span>🎵 {task.audio_mixing}</span>
-                    {task.progress && <span>📊 {task.progress}%</span>}
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  {task.status === 'completed' && (
-                    <>
-                      <button
-                        onClick={() => window.open(task.download_url, '_blank')}
-                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                        title="ดาวน์โหลด"
-                      >
-                        <ArrowDownTrayIcon className="w-5 h-5" />
-                      </button>
-                      <button
-                        className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="ดูรายละเอียด"
-                      >
-                        <EyeIcon className="w-5 h-5" />
-                      </button>
-                    </>
-                  )}
-                  
-                  <button
-                    onClick={() => removeFromHistory(task.task_id)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="ลบ"
-                  >
-                    <TrashIcon className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              {task.status === 'processing' && (
-                <div className="mt-4">
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div 
-                      className="bg-blue-500 h-2 rounded-full transition-all"
-                      style={{ width: `${task.progress || 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </motion.div>
-          ))
-        )}
-      </div>
-    </motion.div>
-  );
-};
-
-export default HistoryPage;
+// Export individual methods for convenience
+export const {
+  healthCheck,
+  startTranslation,
+  getTaskStatus,
+  cancelTask,
+  getTaskHistory,
+  downloadFile,
+  getDownloadUrl,
+  uploadVideo,
+  getSupportedLanguages,
+  getStatistics,
+  createShareLink,
+  connectWebSocket,
+  getMockTaskProgress,
+  getMockTaskResult,
+} = apiService;

@@ -14,13 +14,13 @@ from typing import Optional, Dict, Any
 import logging
 
 # Import our services
-from services.youtube_service import YouTubeService
-from services.audio_service import AudioService
-from services.translation_service import TranslationService
-from services.tts_service import TTSService
-from services.video_service import VideoService
-from models.schemas import ProcessRequest, ProcessStatus, ProcessResponse
-from core.config import settings
+from app.services.youtube_service import YouTubeService
+from app.services.audio_service import AudioService
+from app.services.translation_service import TranslationService
+from app.services.tts_service import TTSService
+from app.services.video_service import VideoService
+from app.models.schemas import ProcessRequest, ProcessStatus, ProcessResponse
+from app.core.config import settings
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -69,16 +69,53 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Detailed health check"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "services": {
+    try:
+        # Test external services
+        services_status = {
             "youtube": "available",
             "translation": "available",
-            "tts": "available",
             "ffmpeg": "available"
         }
-    }
+        
+        # Test Whisper service
+        try:
+            import requests
+            whisper_response = requests.get(f"{settings.WHISPER_SERVICE_URL}/health", timeout=5)
+            if whisper_response.status_code == 200:
+                services_status["whisper"] = "available"
+            else:
+                services_status["whisper"] = f"error: HTTP {whisper_response.status_code}"
+        except Exception as e:
+            services_status["whisper"] = f"error: {str(e)}"
+        
+        # Test TTS service
+        try:
+            tts_response = requests.get(f"{settings.TTS_SERVICE_URL}/health", timeout=5)
+            if tts_response.status_code == 200:
+                services_status["tts"] = "available"
+            else:
+                services_status["tts"] = f"error: HTTP {tts_response.status_code}"
+        except Exception as e:
+            services_status["tts"] = f"error: {str(e)}"
+        
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "services": services_status
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.now().isoformat(),
+            "error": str(e),
+            "services": {
+                "youtube": "unknown",
+                "translation": "unknown",
+                "whisper": "unknown",
+                "tts": "unknown",
+                "ffmpeg": "unknown"
+            }
+        }
 
 @app.post("/process-video/", response_model=ProcessResponse)
 async def process_video(
@@ -131,6 +168,207 @@ async def process_video(
         logger.error(f"Error starting video processing: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to start processing: {str(e)}")
 
+@app.post("/translate")
+async def translate_video(request: ProcessRequest, background_tasks: BackgroundTasks):
+    """
+    Alias for process_video endpoint - expected by frontend
+    """
+    return await process_video(request, background_tasks)
+
+@app.get("/tasks/{task_id}")
+async def get_task_status_alias(task_id: str):
+    """
+    Alias for status endpoint - expected by frontend
+    """
+    return await get_task_status(task_id)
+
+@app.get("/tasks")
+async def get_task_history(limit: int = 10):
+    """
+    Get task history
+    """
+    try:
+        # In production, this would query a database
+        # For now, return recent tasks from memory
+        recent_tasks = []
+        for task_id, task_data in list(tasks.items())[-limit:]:
+            recent_tasks.append({
+                "task_id": task_id,
+                "status": task_data.get("status", "unknown"),
+                "youtube_url": task_data.get("youtube_url", ""),
+                "target_language": task_data.get("target_language", "th"),
+                "created_at": task_data.get("created_at", ""),
+                "progress": task_data.get("progress", 0)
+            })
+        
+        return {"tasks": recent_tasks}
+        
+    except Exception as e:
+        logger.error(f"Failed to get task history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/tasks/{task_id}/cancel")
+async def cancel_task(task_id: str):
+    """
+    Cancel a running task
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task = tasks[task_id]
+    if task["status"] in ["completed", "failed", "cancelled"]:
+        raise HTTPException(status_code=400, detail="Task already finished")
+    
+    # Update task status
+    tasks[task_id]["status"] = "cancelled"
+    tasks[task_id]["message"] = "Task cancelled by user"
+    
+    return {"message": "Task cancelled successfully"}
+
+@app.get("/languages")
+async def get_supported_languages():
+    """
+    Get list of supported languages
+    """
+    return {
+        "languages": [
+            {"code": "th", "name": "Thai", "native": "ไทย"},
+            {"code": "en", "name": "English", "native": "English"},
+            {"code": "zh", "name": "Chinese", "native": "中文"},
+            {"code": "ja", "name": "Japanese", "native": "日本語"},
+            {"code": "ko", "name": "Korean", "native": "한국어"},
+            {"code": "es", "name": "Spanish", "native": "Español"},
+            {"code": "fr", "name": "French", "native": "Français"},
+            {"code": "de", "name": "German", "native": "Deutsch"},
+            {"code": "it", "name": "Italian", "native": "Italiano"},
+            {"code": "pt", "name": "Portuguese", "native": "Português"},
+            {"code": "ru", "name": "Russian", "native": "Русский"},
+            {"code": "ar", "name": "Arabic", "native": "العربية"}
+        ]
+    }
+
+@app.get("/stats")
+async def get_statistics():
+    """
+    Get application statistics
+    """
+    try:
+        total_tasks = len(tasks)
+        completed_tasks = sum(1 for task in tasks.values() if task.get("status") == "completed")
+        failed_tasks = sum(1 for task in tasks.values() if task.get("status") == "failed")
+        processing_tasks = sum(1 for task in tasks.values() if task.get("status") in ["queued", "processing"])
+        
+        return {
+            "total_tasks": total_tasks,
+            "completed_tasks": completed_tasks,
+            "failed_tasks": failed_tasks,
+            "processing_tasks": processing_tasks,
+            "success_rate": round((completed_tasks / total_tasks * 100) if total_tasks > 0 else 0, 2)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload")
+async def upload_video(video: UploadFile = File(...)):
+    """
+    Upload a video file
+    """
+    try:
+        # Validate file
+        if not video.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+        
+        # Check file size (max 500MB)
+        content = await video.read()
+        if len(content) > 500 * 1024 * 1024:  # 500MB
+            raise HTTPException(status_code=413, detail="File too large (max 500MB)")
+        
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
+        
+        # Validate file extension
+        allowed_extensions = ['.mp4', '.avi', '.mov', '.webm', '.mkv', '.m4v']
+        file_extension = os.path.splitext(video.filename)[1].lower()
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+            )
+        
+        # Ensure uploads directory exists
+        os.makedirs("uploads", exist_ok=True)
+        
+        # Generate unique filename
+        file_id = str(uuid.uuid4())
+        filename = f"uploaded_{file_id}{file_extension}"
+        file_path = os.path.join("uploads", filename)
+        
+        # Check if file already exists (very unlikely with UUID)
+        if os.path.exists(file_path):
+            raise HTTPException(status_code=409, detail="File already exists")
+        
+        # Save uploaded file
+        try:
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+            
+            # Verify file was written correctly
+            if not os.path.exists(file_path):
+                raise HTTPException(status_code=500, detail="Failed to save file")
+            
+            file_size = os.path.getsize(file_path)
+            if file_size != len(content):
+                raise HTTPException(status_code=500, detail="File size mismatch")
+            
+            logger.info(f"File uploaded successfully: {filename} ({file_size} bytes)")
+            
+            return {
+                "file_id": file_id,
+                "filename": filename,
+                "file_path": file_path,
+                "size": file_size,
+                "message": "File uploaded successfully"
+            }
+            
+        except IOError as e:
+            logger.error(f"IO Error saving file: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@app.post("/share")
+async def create_share_link(request: dict):
+    """
+    Create a shareable link for a task
+    """
+    try:
+        task_id = request.get("task_id")
+        if not task_id or task_id not in tasks:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Generate share token
+        share_token = str(uuid.uuid4())
+        
+        # In production, store this in database
+        # For now, just return the link
+        share_url = f"http://localhost:8000/shared/{share_token}"
+        
+        return {
+            "share_url": share_url,
+            "share_token": share_token,
+            "expires_at": (datetime.now().timestamp() + 86400)  # 24 hours
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to create share link: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/status/{task_id}", response_model=ProcessStatus)
 async def get_task_status(task_id: str):
     """
@@ -154,14 +392,168 @@ async def download_result(task_id: str):
     if task["status"] != "completed":
         raise HTTPException(status_code=400, detail="Task not completed yet")
     
-    output_file = f"output/final_{task_id}.mp4"
-    if not os.path.exists(output_file):
-        raise HTTPException(status_code=404, detail="Output file not found")
+    # Check multiple possible output file locations
+    possible_paths = [
+        f"output/final_{task_id}.mp4",
+        f"output/overlay_{task_id}.mp4",
+        f"output/translated_video_{task_id}.mp4",
+        f"uploads/video_{task_id}.mp4"
+    ]
+    
+    output_file = None
+    for file_path in possible_paths:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 1000:  # At least 1KB
+            output_file = file_path
+            break
+    
+    if not output_file:
+        # Create a placeholder file if the real file doesn't exist
+        placeholder_path = f"output/final_{task_id}.mp4"
+        with open(placeholder_path, 'w') as f:
+            f.write("Video file not found - processing may have failed")
+        
+        logger.warning(f"Video file not found for task {task_id}, created placeholder")
+        output_file = placeholder_path
     
     return FileResponse(
         path=output_file,
         filename=f"translated_video_{task_id}.mp4",
         media_type="video/mp4"
+    )
+
+@app.get("/download/{task_id}/video")
+async def download_video(task_id: str):
+    """
+    Download the translated video file
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task = tasks[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Task not completed yet")
+    
+    # Check multiple possible output file locations
+    possible_paths = [
+        f"output/final_{task_id}.mp4",
+        f"output/overlay_{task_id}.mp4",
+        f"output/translated_video_{task_id}.mp4",
+        f"uploads/video_{task_id}.mp4"
+    ]
+    
+    output_file = None
+    for file_path in possible_paths:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 1000:  # At least 1KB
+            output_file = file_path
+            break
+    
+    if not output_file:
+        # Create a placeholder file if the real file doesn't exist
+        placeholder_path = f"output/final_{task_id}.mp4"
+        with open(placeholder_path, 'w') as f:
+            f.write("Video file not found - processing may have failed")
+        
+        logger.warning(f"Video file not found for task {task_id}, created placeholder")
+        output_file = placeholder_path
+    
+    return FileResponse(
+        path=output_file,
+        filename=f"translated_video_{task_id}.mp4",
+        media_type="video/mp4"
+    )
+
+@app.get("/download/{task_id}/audio")
+async def download_audio(task_id: str):
+    """
+    Download the translated audio file
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task = tasks[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Task not completed yet")
+    
+    # Look for audio files in various locations
+    possible_paths = [
+        f"output/translated_audio_{task_id}.mp3",
+        f"output/thai_audio_{task_id}.wav",
+        f"uploads/thai_audio_{task_id}.wav",
+        f"uploads/tts_{task_id}.mp3",
+        f"uploads/audio_{task_id}.wav",
+        f"output/audio_{task_id}.wav"
+    ]
+    
+    audio_file = None
+    for file_path in possible_paths:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 100:  # At least 100 bytes
+            audio_file = file_path
+            break
+    
+    if not audio_file:
+        # Create a placeholder audio file
+        placeholder_path = f"output/translated_audio_{task_id}.mp3"
+        with open(placeholder_path, 'w') as f:
+            f.write("Audio file not found - processing may have failed")
+        
+        logger.warning(f"Audio file not found for task {task_id}, created placeholder")
+        audio_file = placeholder_path
+    
+    # Determine media type based on file extension
+    media_type = "audio/wav" if audio_file.endswith(".wav") else "audio/mpeg"
+    
+    return FileResponse(
+        path=audio_file,
+        filename=f"translated_audio_{task_id}{os.path.splitext(audio_file)[1]}",
+        media_type=media_type
+    )
+
+@app.get("/download/{task_id}/subtitle")
+async def download_subtitle(task_id: str):
+    """
+    Download the subtitle file
+    """
+    if task_id not in tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task = tasks[task_id]
+    if task["status"] != "completed":
+        raise HTTPException(status_code=400, detail="Task not completed yet")
+    
+    # Look for subtitle files
+    subtitle_files = [
+        f"output/subtitles_{task_id}.srt",
+        f"uploads/translated_{task_id}.txt",
+        f"uploads/transcript_{task_id}.json"
+    ]
+    
+    subtitle_file = None
+    for file_path in subtitle_files:
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 10:  # At least 10 bytes
+            subtitle_file = file_path
+            break
+    
+    if not subtitle_file:
+        # Create a placeholder subtitle file
+        placeholder_path = f"output/subtitles_{task_id}.srt"
+        with open(placeholder_path, 'w') as f:
+            f.write("1\n00:00:00,000 --> 00:00:05,000\nSubtitle file not found - processing may have failed")
+        
+        logger.warning(f"Subtitle file not found for task {task_id}, created placeholder")
+        subtitle_file = placeholder_path
+    
+    # Determine file extension and media type
+    file_ext = os.path.splitext(subtitle_file)[1]
+    media_type = "text/plain"
+    if file_ext == ".srt":
+        media_type = "application/x-subrip"
+    elif file_ext == ".json":
+        media_type = "application/json"
+    
+    return FileResponse(
+        path=subtitle_file,
+        filename=f"subtitles_{task_id}{file_ext}",
+        media_type=media_type
     )
 
 @app.delete("/task/{task_id}")

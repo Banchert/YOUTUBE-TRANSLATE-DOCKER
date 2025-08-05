@@ -3,52 +3,28 @@ import os
 import asyncio
 import logging
 import tempfile
+import requests
 from typing import Optional, Dict, Any
 import subprocess
-from TTS.api import TTS
-import torch
-from core.config import settings, TTS_MODELS
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 class TTSService:
-    """Service for Text-to-Speech conversion using Coqui TTS"""
+    """Service for Text-to-Speech conversion using external TTS service"""
     
     def __init__(self):
         self.upload_dir = settings.UPLOAD_DIR
         self.output_dir = settings.OUTPUT_DIR
-        self.tts_models = {}
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.tts_service_url = settings.TTS_SERVICE_URL
         
         # Ensure directories exist
         os.makedirs(self.upload_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Load default Thai TTS model
-        self._load_thai_model()
-    
-    def _load_thai_model(self):
-        """Load Thai TTS model"""
-        try:
-            model_name = settings.TTS_MODEL_TH
-            logger.info(f"Loading Thai TTS model: {model_name}")
-            
-            self.tts_models["th"] = TTS(model_name=model_name).to(self.device)
-            logger.info("Thai TTS model loaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to load Thai TTS model: {str(e)}")
-            # Fallback to simpler model
-            try:
-                self.tts_models["th"] = TTS(model_name="tts_models/th/mai_female/glow-tts").to(self.device)
-                logger.info("Loaded fallback Thai TTS model")
-            except Exception as fallback_error:
-                logger.error(f"Failed to load fallback TTS model: {str(fallback_error)}")
-                self.tts_models["th"] = None
     
     async def text_to_speech(self, text: str, task_id: str, language: str = "th", voice_type: str = "female") -> str:
         """
-        Convert text to speech
+        Convert text to speech using external TTS service
         """
         try:
             logger.info(f"Starting text-to-speech for task {task_id}")
@@ -76,23 +52,42 @@ class TTSService:
     
     async def _synthesize_text(self, text: str, task_id: str, language: str, voice_type: str) -> str:
         """
-        Synthesize speech for a single text
+        Synthesize speech for a single text using external TTS service
         """
         try:
             output_path = os.path.join(self.upload_dir, f"thai_audio_{task_id}.wav")
             
-            # Get appropriate TTS model
-            tts_model = self._get_tts_model(language, voice_type)
+            # Call external TTS service
+            url = f"{self.tts_service_url}/synthesize"
             
-            if tts_model is None:
-                # Fallback to external TTS service or basic synthesis
-                return await self._fallback_tts(text, task_id, language)
+            payload = {
+                "text": text,
+                "language": language,
+                "voice_type": voice_type,
+                "use_edge_tts": True
+            }
             
-            # Run TTS synthesis in executor to avoid blocking
-            await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: tts_model.tts_to_file(text=text, file_path=output_path)
-            )
+            response = requests.post(url, json=payload)
+            
+            if response.status_code != 200:
+                raise Exception(f"TTS service error: {response.text}")
+            
+            result = response.json()
+            audio_filename = result.get('audio_file')
+            
+            if not audio_filename:
+                raise Exception("TTS service did not return audio file")
+            
+            # Download the generated audio file
+            download_url = f"{self.tts_service_url}/download/{audio_filename}"
+            audio_response = requests.get(download_url)
+            
+            if audio_response.status_code != 200:
+                raise Exception("Failed to download generated audio file")
+            
+            # Save the audio file
+            with open(output_path, 'wb') as f:
+                f.write(audio_response.content)
             
             if not os.path.exists(output_path):
                 raise Exception("TTS output file was not created")
@@ -111,144 +106,122 @@ class TTSService:
         Synthesize speech for long text by splitting into chunks
         """
         try:
-            logger.info(f"Synthesizing long text in chunks for task {task_id}")
+            logger.info(f"Synthesizing long text ({len(text)} chars) for task {task_id}")
             
             # Split text into manageable chunks
-            chunks = self._split_text_for_tts(text)
+            text_chunks = self._split_text_for_tts(text)
             audio_files = []
             
-            for i, chunk in enumerate(chunks):
-                if chunk.strip():
-                    logger.info(f"Synthesizing chunk {i+1}/{len(chunks)}")
-                    
-                    chunk_output = os.path.join(self.upload_dir, f"tts_chunk_{task_id}_{i}.wav")
-                    
-                    # Get TTS model
-                    tts_model = self._get_tts_model(language, voice_type)
-                    
-                    if tts_model:
-                        await asyncio.get_event_loop().run_in_executor(
-                            None, 
-                            lambda: tts_model.tts_to_file(text=chunk.strip(), file_path=chunk_output)
-                        )
-                        
-                        if os.path.exists(chunk_output):
-                            audio_files.append(chunk_output)
-                    
-                    # Small delay between chunks
-                    await asyncio.sleep(0.1)
+            # Synthesize each chunk
+            for i, chunk in enumerate(text_chunks):
+                if not chunk.strip():
+                    continue
+                
+                chunk_task_id = f"{task_id}_chunk_{i}"
+                chunk_audio = await self._synthesize_text(chunk, chunk_task_id, language, voice_type)
+                audio_files.append(chunk_audio)
             
             if not audio_files:
-                raise Exception("No audio chunks were generated")
+                raise Exception("No audio files were generated")
             
-            # Concatenate all audio chunks
-            final_audio = await self._concatenate_audio_files(audio_files, task_id)
+            # Concatenate all audio files
+            if len(audio_files) == 1:
+                final_audio = audio_files[0]
+            else:
+                final_audio = await self._concatenate_audio_files(audio_files, task_id)
             
-            # Clean up chunk files
-            for chunk_file in audio_files:
-                try:
-                    os.remove(chunk_file)
-                except:
-                    pass
+            # Clean up individual chunk files
+            for audio_file in audio_files:
+                if os.path.exists(audio_file) and audio_file != final_audio:
+                    try:
+                        os.remove(audio_file)
+                    except:
+                        pass
             
             return final_audio
             
         except Exception as e:
-            logger.error(f"Long text TTS failed: {str(e)}")
+            logger.error(f"Long text synthesis failed: {str(e)}")
             raise
-    
-    def _get_tts_model(self, language: str, voice_type: str):
-        """
-        Get appropriate TTS model for language and voice type
-        """
-        # For now, only Thai is supported
-        if language == "th":
-            return self.tts_models.get("th")
-        else:
-            logger.warning(f"Language {language} not supported, using Thai model")
-            return self.tts_models.get("th")
     
     def _preprocess_text_for_tts(self, text: str, language: str) -> str:
         """
         Preprocess text for TTS synthesis
         """
-        # Basic text cleaning
-        text = text.strip()
-        
-        # Remove problematic characters
-        text = text.replace('"', '"')
-        text = text.replace('"', '"')
-        text = text.replace(''', "'")
-        text = text.replace(''', "'")
-        
-        # Language-specific preprocessing
         if language == "th":
-            text = self._preprocess_thai_text(text)
-        
-        return text
+            return self._preprocess_thai_text(text)
+        else:
+            return self._preprocess_english_text(text)
     
     def _preprocess_thai_text(self, text: str) -> str:
         """
-        Preprocess Thai text for better TTS
+        Preprocess Thai text for TTS
         """
-        # Add spaces around English words in Thai text
+        # Remove extra whitespace
+        text = " ".join(text.split())
+        
+        # Remove special characters that might cause issues
         import re
-        text = re.sub(r'([ก-๙])([A-Za-z])', r'\1 \2', text)
-        text = re.sub(r'([A-Za-z])([ก-๙])', r'\1 \2', text)
+        text = re.sub(r'[^\u0E00-\u0E7F\s\w\.,!?;:]', '', text)
         
-        # Fix common Thai pronunciation issues
-        replacements = {
-            'ฯลฯ': 'และอื่นๆ',
-            'ฯ': '',
-            'ๆ': 'ๆ',  # Keep as is
-            'URL': 'ยูอาร์แอล',
-            'Email': 'อีเมล',
-            'Facebook': 'เฟซบุ๊ก',
-            'YouTube': 'ยูทูป',
-            'Google': 'กูเกิล'
-        }
+        # Ensure proper sentence endings
+        text = text.replace('..', '.')
+        text = text.replace('!!', '!')
+        text = text.replace('??', '?')
         
-        for old, new in replacements.items():
-            text = text.replace(old, new)
+        return text.strip()
+    
+    def _preprocess_english_text(self, text: str) -> str:
+        """
+        Preprocess English text for TTS
+        """
+        # Remove extra whitespace
+        text = " ".join(text.split())
         
-        return text
+        # Remove special characters that might cause issues
+        import re
+        text = re.sub(r'[^\x00-\x7F\s\w\.,!?;:]', '', text)
+        
+        # Ensure proper sentence endings
+        text = text.replace('..', '.')
+        text = text.replace('!!', '!')
+        text = text.replace('??', '?')
+        
+        return text.strip()
     
     def _split_text_for_tts(self, text: str, max_length: int = 800) -> list:
         """
-        Split text into chunks suitable for TTS
+        Split long text into smaller chunks for TTS
         """
-        import re
+        if len(text) <= max_length:
+            return [text]
         
         # Split by sentences first
-        sentences = re.split(r'[.!?।]', text)
+        sentences = []
+        current_sentence = ""
+        
+        for char in text:
+            current_sentence += char
+            if char in '.!?':
+                sentences.append(current_sentence.strip())
+                current_sentence = ""
+        
+        if current_sentence.strip():
+            sentences.append(current_sentence.strip())
+        
+        # Group sentences into chunks
         chunks = []
         current_chunk = ""
         
         for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-            
-            if len(current_chunk) + len(sentence) > max_length:
+            if len(current_chunk) + len(sentence) <= max_length:
+                current_chunk += " " + sentence if current_chunk else sentence
+            else:
                 if current_chunk:
                     chunks.append(current_chunk.strip())
-                    current_chunk = sentence
-                else:
-                    # Sentence too long, split by phrases
-                    phrases = re.split(r'[,;:]', sentence)
-                    for phrase in phrases:
-                        phrase = phrase.strip()
-                        if phrase:
-                            if len(current_chunk) + len(phrase) > max_length:
-                                if current_chunk:
-                                    chunks.append(current_chunk.strip())
-                                current_chunk = phrase
-                            else:
-                                current_chunk += " " + phrase
-            else:
-                current_chunk += " " + sentence
+                current_chunk = sentence
         
-        if current_chunk.strip():
+        if current_chunk:
             chunks.append(current_chunk.strip())
         
         return chunks
@@ -305,15 +278,16 @@ class TTSService:
         Optimize audio for video merging
         """
         try:
-            optimized_path = os.path.join(self.upload_dir, f"optimized_thai_audio_{task_id}.wav")
+            optimized_path = os.path.join(self.upload_dir, f"optimized_audio_{task_id}.wav")
             
             # FFmpeg command for audio optimization
             cmd = [
                 'ffmpeg',
                 '-i', audio_path,
-                '-ar', str(settings.TTS_SAMPLE_RATE),  # Sample rate
-                '-ac', '2',  # Stereo
-                '-b:a', '128k',  # Bitrate
+                '-af', 'volume=1.2,highpass=f=80,lowpass=f=8000',  # Enhance audio
+                '-ar', '44100',  # 44.1kHz sample rate
+                '-ac', '2',      # Stereo
+                '-b:a', '192k',  # 192kbps bitrate
                 '-y',
                 optimized_path
             ]
@@ -330,99 +304,62 @@ class TTSService:
                 logger.warning(f"Audio optimization failed, using original: {stderr.decode()}")
                 return audio_path
             
+            if not os.path.exists(optimized_path):
+                logger.warning("Optimized audio file was not created, using original")
+                return audio_path
+            
             return optimized_path
             
         except Exception as e:
             logger.warning(f"Audio optimization failed, using original: {str(e)}")
             return audio_path
     
-    async def _fallback_tts(self, text: str, task_id: str, language: str) -> str:
-        """
-        Fallback TTS using external service or espeak
-        """
-        try:
-            logger.warning("Using fallback TTS (espeak)")
-            
-            output_path = os.path.join(self.upload_dir, f"fallback_thai_audio_{task_id}.wav")
-            
-            # Use espeak as fallback
-            cmd = [
-                'espeak',
-                '-v', 'th',  # Thai voice
-                '-s', '150',  # Speed
-                '-w', output_path,  # Output file
-                text
-            ]
-            
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            await process.communicate()
-            
-            if process.returncode == 0 and os.path.exists(output_path):
-                return output_path
-            else:
-                raise Exception("Fallback TTS failed")
-                
-        except Exception as e:
-            logger.error(f"Fallback TTS failed: {str(e)}")
-            raise Exception("All TTS methods failed")
-    
     async def get_audio_duration(self, audio_path: str) -> float:
         """
-        Get audio duration using ffprobe
+        Get audio duration using FFprobe
         """
         try:
             cmd = [
-                'ffprobe', '-v', 'quiet', '-print_format', 'json',
-                '-show_format', audio_path
+                'ffprobe',
+                '-v', 'quiet',
+                '-show_entries', 'format=duration',
+                '-of', 'csv=p=0',
+                audio_path
             ]
             
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            stdout, stderr = await process.communicate()
-            
-            if process.returncode != 0:
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                return float(result.stdout.strip())
+            else:
+                logger.warning(f"Could not get audio duration: {result.stderr}")
                 return 0.0
-            
-            import json
-            probe_data = json.loads(stdout.decode())
-            duration = float(probe_data['format']['duration'])
-            
-            return duration
-            
+                
         except Exception as e:
-            logger.warning(f"Could not get audio duration: {str(e)}")
+            logger.error(f"Error getting audio duration: {str(e)}")
             return 0.0
     
     async def cleanup_tts_files(self, task_id: str):
         """
-        Clean up TTS files for a task
+        Clean up TTS-related files
         """
         try:
             files_to_clean = [
                 f"thai_audio_{task_id}.wav",
-                f"optimized_thai_audio_{task_id}.wav",
-                f"fallback_thai_audio_{task_id}.wav",
+                f"optimized_audio_{task_id}.wav",
                 f"filelist_{task_id}.txt"
             ]
             
-            # Also clean up any TTS chunks
-            for i in range(20):  # Assume max 20 chunks
-                files_to_clean.append(f"tts_chunk_{task_id}_{i}.wav")
+            # Also clean up chunk files
+            import glob
+            chunk_pattern = f"*_chunk_*_{task_id}.wav"
+            chunk_files = glob.glob(os.path.join(self.upload_dir, chunk_pattern))
+            files_to_clean.extend([os.path.basename(f) for f in chunk_files])
             
             for filename in files_to_clean:
                 file_path = os.path.join(self.upload_dir, filename)
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    logger.info(f"Cleaned up TTS file: {file_path}")
+                    logger.info(f"Cleaned up TTS file: {filename}")
                     
         except Exception as e:
-            logger.error(f"Error cleaning up TTS files for task {task_id}: {str(e)}")
+            logger.error(f"Failed to cleanup TTS files for task {task_id}: {str(e)}")

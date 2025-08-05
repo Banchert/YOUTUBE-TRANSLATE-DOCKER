@@ -7,8 +7,7 @@ import logging
 import tempfile
 import requests
 from typing import Dict, Any, List, Optional
-import whisper
-from core.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -17,19 +16,7 @@ class AudioService:
     
     def __init__(self):
         self.upload_dir = settings.UPLOAD_DIR
-        self.whisper_model = None
-        self.load_whisper_model()
-    
-    def load_whisper_model(self):
-        """Load Whisper model for speech recognition"""
-        try:
-            model_name = settings.WHISPER_MODEL
-            logger.info(f"Loading Whisper model: {model_name}")
-            self.whisper_model = whisper.load_model(model_name)
-            logger.info("Whisper model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load Whisper model: {str(e)}")
-            self.whisper_model = None
+        self.whisper_service_url = settings.WHISPER_SERVICE_URL
     
     async def extract_audio(self, video_path: str, task_id: str) -> str:
         """
@@ -82,7 +69,7 @@ class AudioService:
     
     async def speech_to_text(self, audio_path: str, task_id: str) -> str:
         """
-        Convert speech to text using Whisper
+        Convert speech to text using external Whisper service
         """
         try:
             logger.info(f"Starting speech-to-text for task {task_id}")
@@ -90,145 +77,114 @@ class AudioService:
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-            if self.whisper_model is None:
-                # Try to reload the model
-                self.load_whisper_model()
-                if self.whisper_model is None:
-                    raise Exception("Whisper model not available")
+            # Call external Whisper service
+            url = f"{self.whisper_service_url}/transcribe"
             
-            # Transcribe audio
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, self.whisper_model.transcribe, audio_path
-            )
-            
-            # Extract transcript text
-            transcript = result["text"].strip()
-            
-            if not transcript:
-                raise Exception("No speech detected in audio")
-            
-            # Save transcript details
-            transcript_path = os.path.join(self.upload_dir, f"transcript_{task_id}.json")
-            transcript_data = {
-                "text": transcript,
-                "language": result.get("language", "unknown"),
-                "segments": result.get("segments", []),
-                "duration": self._get_audio_duration(audio_path)
-            }
-            
-            with open(transcript_path, 'w', encoding='utf-8') as f:
-                json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"Speech-to-text completed for task {task_id}")
-            logger.info(f"Detected language: {result.get('language', 'unknown')}")
-            logger.info(f"Transcript length: {len(transcript)} characters")
-            
-            return transcript
-            
+            with open(audio_path, 'rb') as audio_file:
+                files = {'file': audio_file}
+                response = requests.post(url, files=files)
+                
+                if response.status_code != 200:
+                    raise Exception(f"Whisper service error: {response.text}")
+                
+                result = response.json()
+                transcript = result.get('text', '')
+                
+                # Save transcript to file
+                transcript_path = os.path.join(self.upload_dir, f"transcript_{task_id}.json")
+                with open(transcript_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                logger.info(f"Speech-to-text completed for task {task_id}")
+                return transcript
+                
         except Exception as e:
             logger.error(f"Speech-to-text failed for task {task_id}: {str(e)}")
             raise Exception(f"Failed to convert speech to text: {str(e)}")
     
     async def speech_to_text_with_timestamps(self, audio_path: str, task_id: str) -> Dict[str, Any]:
         """
-        Convert speech to text with detailed timestamps
+        Convert speech to text with timestamps using external Whisper service
         """
         try:
-            logger.info(f"Starting detailed speech-to-text for task {task_id}")
+            logger.info(f"Starting speech-to-text with timestamps for task {task_id}")
             
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-            if self.whisper_model is None:
-                self.load_whisper_model()
-                if self.whisper_model is None:
-                    raise Exception("Whisper model not available")
+            # Call external Whisper service
+            url = f"{self.whisper_service_url}/transcribe"
             
-            # Transcribe with word-level timestamps
-            result = await asyncio.get_event_loop().run_in_executor(
-                None, 
-                lambda: self.whisper_model.transcribe(
-                    audio_path, 
-                    word_timestamps=True,
-                    verbose=False
-                )
-            )
-            
-            # Process segments with timestamps
-            processed_segments = []
-            for segment in result.get("segments", []):
-                processed_segment = {
-                    "start": segment.get("start", 0),
-                    "end": segment.get("end", 0),
-                    "text": segment.get("text", "").strip(),
-                    "confidence": segment.get("avg_logprob", 0),
-                    "words": segment.get("words", [])
-                }
-                processed_segments.append(processed_segment)
-            
-            transcript_data = {
-                "full_text": result["text"].strip(),
-                "language": result.get("language", "unknown"),
-                "segments": processed_segments,
-                "duration": self._get_audio_duration(audio_path)
-            }
-            
-            # Save detailed transcript
-            transcript_path = os.path.join(self.upload_dir, f"detailed_transcript_{task_id}.json")
-            with open(transcript_path, 'w', encoding='utf-8') as f:
-                json.dump(transcript_data, f, ensure_ascii=False, indent=2)
-            
-            return transcript_data
-            
+            with open(audio_path, 'rb') as audio_file:
+                files = {'file': audio_file}
+                response = requests.post(url, files=files)
+                
+                if response.status_code != 200:
+                    raise Exception(f"Whisper service error: {response.text}")
+                
+                result = response.json()
+                
+                # Save transcript to file
+                transcript_path = os.path.join(self.upload_dir, f"transcript_{task_id}.json")
+                with open(transcript_path, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                
+                logger.info(f"Speech-to-text with timestamps completed for task {task_id}")
+                return result
+                
         except Exception as e:
-            logger.error(f"Detailed speech-to-text failed for task {task_id}: {str(e)}")
+            logger.error(f"Speech-to-text with timestamps failed for task {task_id}: {str(e)}")
             raise Exception(f"Failed to convert speech to text with timestamps: {str(e)}")
     
     def _get_audio_duration(self, audio_path: str) -> float:
         """
-        Get audio duration using ffprobe
+        Get audio duration using FFprobe
         """
         try:
             cmd = [
-                'ffprobe', '-v', 'quiet', '-print_format', 'json',
-                '-show_format', audio_path
+                'ffprobe',
+                '-v', 'quiet',
+                '-show_entries', 'format=duration',
+                '-of', 'csv=p=0',
+                audio_path
             ]
             
             result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
+            if result.returncode == 0:
+                return float(result.stdout.strip())
+            else:
                 logger.warning(f"Could not get audio duration: {result.stderr}")
                 return 0.0
-            
-            probe_data = json.loads(result.stdout)
-            duration = float(probe_data['format']['duration'])
-            
-            return duration
-            
+                
         except Exception as e:
-            logger.warning(f"Failed to get audio duration: {str(e)}")
+            logger.error(f"Error getting audio duration: {str(e)}")
             return 0.0
     
     async def enhance_audio_quality(self, audio_path: str, task_id: str) -> str:
         """
-        Enhance audio quality for better speech recognition
+        Enhance audio quality using FFmpeg
         """
         try:
             logger.info(f"Enhancing audio quality for task {task_id}")
             
+            if not os.path.exists(audio_path):
+                raise FileNotFoundError(f"Audio file not found: {audio_path}")
+            
+            # Output enhanced audio file path
             enhanced_path = os.path.join(self.upload_dir, f"enhanced_audio_{task_id}.wav")
             
             # FFmpeg command for audio enhancement
             cmd = [
                 'ffmpeg',
                 '-i', audio_path,
-                '-af', 'highpass=f=80,lowpass=f=8000,volume=2.0',  # Filter chain
+                '-af', 'highpass=f=200,lowpass=f=3000,volume=1.5',  # Basic enhancement
                 '-ar', '16000',  # 16kHz sample rate
-                '-ac', '1',      # Mono
-                '-y',
+                '-ac', '1',  # Mono channel
+                '-y',  # Overwrite output file
                 enhanced_path
             ]
             
+            # Run FFmpeg
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -238,14 +194,21 @@ class AudioService:
             stdout, stderr = await process.communicate()
             
             if process.returncode != 0:
-                logger.warning(f"Audio enhancement failed, using original: {stderr.decode()}")
+                error_msg = stderr.decode() if stderr else "Unknown FFmpeg error"
+                logger.error(f"FFmpeg audio enhancement failed: {error_msg}")
+                # Return original file if enhancement fails
                 return audio_path
             
-            logger.info(f"Audio enhanced successfully: {enhanced_path}")
+            if not os.path.exists(enhanced_path):
+                logger.warning("Enhanced audio file was not created, using original")
+                return audio_path
+            
+            logger.info(f"Audio enhancement completed: {enhanced_path}")
             return enhanced_path
             
         except Exception as e:
-            logger.warning(f"Audio enhancement failed, using original: {str(e)}")
+            logger.error(f"Audio enhancement failed for task {task_id}: {str(e)}")
+            # Return original file if enhancement fails
             return audio_path
     
     async def split_audio_for_processing(self, audio_path: str, task_id: str, chunk_duration: int = 300) -> List[str]:
@@ -296,25 +259,26 @@ class AudioService:
     
     async def cleanup_audio_files(self, task_id: str):
         """
-        Clean up audio files for a task
+        Clean up temporary audio files
         """
         try:
             files_to_clean = [
                 f"audio_{task_id}.wav",
                 f"enhanced_audio_{task_id}.wav",
-                f"transcript_{task_id}.json",
-                f"detailed_transcript_{task_id}.json"
+                f"transcript_{task_id}.json"
             ]
             
-            # Also clean up any audio chunks
-            for i in range(10):  # Assume max 10 chunks
-                files_to_clean.append(f"chunk_{task_id}_{i}.wav")
+            # Also clean up chunks
+            import glob
+            chunk_pattern = f"chunk_{task_id}_*.wav"
+            chunk_files = glob.glob(os.path.join(self.upload_dir, chunk_pattern))
+            files_to_clean.extend([os.path.basename(f) for f in chunk_files])
             
             for filename in files_to_clean:
                 file_path = os.path.join(self.upload_dir, filename)
                 if os.path.exists(file_path):
                     os.remove(file_path)
-                    logger.info(f"Cleaned up audio file: {file_path}")
+                    logger.info(f"Cleaned up audio file: {filename}")
                     
         except Exception as e:
-            logger.error(f"Error cleaning up audio files for task {task_id}: {str(e)}")
+            logger.error(f"Failed to cleanup audio files for task {task_id}: {str(e)}")

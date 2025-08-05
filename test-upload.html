@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ทดสอบการอัปโหลดไฟล์ YouTube Translator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+        .upload-area:hover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+        .test-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #0056b3;
+        }
+        .test-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin-top: 10px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+        }
+        .file-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        input[type="file"] {
+            display: none;
+        }
+        .file-input-label {
+            display: inline-block;
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        .file-input-label:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 ทดสอบการอัปโหลดไฟล์ YouTube Translator</h1>
+        
+        <div class="test-section">
+            <h3>1. ทดสอบการเชื่อมต่อ API</h3>
+            <button class="test-button" onclick="testConnection()">ทดสอบการเชื่อมต่อ</button>
+            <div id="connection-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>2. ทดสอบการอัปโหลดไฟล์</h3>
+            
+            <div class="upload-area" id="uploadArea">
+                <h4>📁 ลากไฟล์วิดีโอมาที่นี่ หรือคลิกเพื่อเลือกไฟล์</h4>
+                <p>รองรับ: MP4, AVI, MOV, WebM, MKV (สูงสุด 500MB)</p>
+                <label class="file-input-label">
+                    เลือกไฟล์
+                    <input type="file" id="fileInput" accept="video/*" onchange="handleFileSelect(event)">
+                </label>
+            </div>
+            
+            <div id="file-info"></div>
+            <div id="upload-progress"></div>
+            <div id="upload-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>3. ทดสอบไฟล์ตัวอย่าง</h3>
+            <button class="test-button" onclick="createTestFile()">สร้างไฟล์ทดสอบ</button>
+            <button class="test-button" onclick="testLargeFile()">ทดสอบไฟล์ใหญ่</button>
+            <button class="test-button" onclick="testInvalidFile()">ทดสอบไฟล์ไม่ถูกต้อง</button>
+            <div id="test-status"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>4. ข้อมูลการอัปโหลด</h3>
+            <button class="test-button" onclick="checkUploads()">ตรวจสอบไฟล์ที่อัปโหลด</button>
+            <div id="uploads-info"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        let currentFile = null;
+        
+        function showStatus(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        async function testConnection() {
+            try {
+                showStatus('connection-status', 'กำลังทดสอบการเชื่อมต่อ...', 'info');
+                
+                const response = await fetch(`${API_BASE_URL}/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus('connection-status', 
+                        `✅ เชื่อมต่อสำเร็จ!<br>
+                         API Status: ${data.status || 'OK'}<br>
+                         Services: ${JSON.stringify(data.services || {})}`, 
+                        'success');
+                } else {
+                    showStatus('connection-status', `❌ เชื่อมต่อล้มเหลว: ${response.status}`, 'error');
+                }
+            } catch (error) {
+                showStatus('connection-status', `❌ เกิดข้อผิดพลาด: ${error.message}`, 'error');
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                displayFileInfo(file);
+                currentFile = file;
+            }
+        }
+
+        function displayFileInfo(file) {
+            const fileInfo = document.getElementById('file-info');
+            const sizeMB = (file.size / 1024 / 1024).toFixed(2);
+            
+            fileInfo.innerHTML = `
+                <div class="file-info">
+                    <h4>📄 ข้อมูลไฟล์</h4>
+                    <p><strong>ชื่อ:</strong> ${file.name}</p>
+                    <p><strong>ขนาด:</strong> ${sizeMB} MB (${file.size} bytes)</p>
+                    <p><strong>ประเภท:</strong> ${file.type || 'ไม่ระบุ'}</p>
+                    <p><strong>แก้ไขเมื่อ:</strong> ${new Date(file.lastModified).toLocaleString('th-TH')}</p>
+                    <button class="test-button" onclick="uploadFile()">อัปโหลดไฟล์</button>
+                </div>
+            `;
+        }
+
+        async function uploadFile() {
+            if (!currentFile) {
+                showStatus('upload-status', '❌ ไม่มีไฟล์ที่เลือก', 'error');
+                return;
+            }
+
+            try {
+                showStatus('upload-status', 'กำลังอัปโหลด...', 'info');
+                
+                const formData = new FormData();
+                formData.append('video', currentFile);
+                
+                // Show progress bar
+                const progressDiv = document.getElementById('upload-progress');
+                progressDiv.innerHTML = `
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%">0%</div>
+                    </div>
+                `;
+                
+                const xhr = new XMLHttpRequest();
+                xhr.timeout = 5 * 60 * 1000; // 5 minutes
+                
+                xhr.upload.addEventListener('progress', (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = (event.loaded / event.total) * 100;
+                        const progressFill = document.getElementById('progressFill');
+                        progressFill.style.width = percentComplete + '%';
+                        progressFill.textContent = percentComplete.toFixed(1) + '%';
+                    }
+                });
+                
+                xhr.addEventListener('load', () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const response = JSON.parse(xhr.responseText);
+                            showStatus('upload-status', 
+                                `✅ อัปโหลดสำเร็จ!<br>
+                                 File ID: ${response.file_id}<br>
+                                 Filename: ${response.filename}<br>
+                                 Size: ${response.size} bytes<br>
+                                 Path: ${response.file_path}`, 
+                                'success');
+                        } catch (error) {
+                            showStatus('upload-status', '❌ Invalid response format', 'error');
+                        }
+                    } else {
+                        let errorMessage = `Upload failed: HTTP ${xhr.status}`;
+                        try {
+                            const errorResponse = JSON.parse(xhr.responseText);
+                            if (errorResponse.detail) {
+                                errorMessage = errorResponse.detail;
+                            }
+                        } catch (e) {
+                            // Use default error message
+                        }
+                        showStatus('upload-status', `❌ ${errorMessage}`, 'error');
+                    }
+                });
+                
+                xhr.addEventListener('error', () => {
+                    showStatus('upload-status', '❌ Network error - ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้', 'error');
+                });
+                
+                xhr.addEventListener('timeout', () => {
+                    showStatus('upload-status', '❌ Upload timeout - ไฟล์ใหญ่เกินไปหรือการเชื่อมต่อช้า', 'error');
+                });
+                
+                xhr.open('POST', `${API_BASE_URL}/upload`);
+                xhr.send(formData);
+                
+            } catch (error) {
+                showStatus('upload-status', `❌ เกิดข้อผิดพลาด: ${error.message}`, 'error');
+            }
+        }
+
+        function createTestFile() {
+            try {
+                // Create a small test video file (simulated)
+                const testContent = 'test video content';
+                const blob = new Blob([testContent], { type: 'video/mp4' });
+                const file = new File([blob], 'test-video.mp4', { type: 'video/mp4' });
+                
+                currentFile = file;
+                displayFileInfo(file);
+                showStatus('test-status', '✅ สร้างไฟล์ทดสอบสำเร็จ', 'success');
+            } catch (error) {
+                showStatus('test-status', `❌ ไม่สามารถสร้างไฟล์ทดสอบ: ${error.message}`, 'error');
+            }
+        }
+
+        function testLargeFile() {
+            try {
+                // Create a large test file (simulated)
+                const largeContent = 'x'.repeat(600 * 1024 * 1024); // 600MB
+                const blob = new Blob([largeContent], { type: 'video/mp4' });
+                const file = new File([blob], 'large-test-video.mp4', { type: 'video/mp4' });
+                
+                currentFile = file;
+                displayFileInfo(file);
+                showStatus('test-status', '⚠️ สร้างไฟล์ใหญ่ (600MB) - ควรจะถูกปฏิเสธ', 'info');
+            } catch (error) {
+                showStatus('test-status', `❌ ไม่สามารถสร้างไฟล์ใหญ่: ${error.message}`, 'error');
+            }
+        }
+
+        function testInvalidFile() {
+            try {
+                // Create an invalid file type
+                const invalidContent = 'invalid content';
+                const blob = new Blob([invalidContent], { type: 'text/plain' });
+                const file = new File([blob], 'invalid-file.txt', { type: 'text/plain' });
+                
+                currentFile = file;
+                displayFileInfo(file);
+                showStatus('test-status', '⚠️ สร้างไฟล์ไม่ถูกต้อง - ควรจะถูกปฏิเสธ', 'info');
+            } catch (error) {
+                showStatus('test-status', `❌ ไม่สามารถสร้างไฟล์ไม่ถูกต้อง: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkUploads() {
+            try {
+                showStatus('uploads-info', 'กำลังตรวจสอบไฟล์ที่อัปโหลด...', 'info');
+                
+                // This would normally check the uploads directory
+                // For now, we'll just show a message
+                showStatus('uploads-info', 
+                    `📁 ตรวจสอบโฟลเดอร์ uploads/<br>
+                     ไฟล์ที่อัปโหลดจะถูกเก็บไว้ที่นั่น<br>
+                     ใช้คำสั่ง "dir uploads" เพื่อดูไฟล์`, 
+                    'info');
+                
+            } catch (error) {
+                showStatus('uploads-info', `❌ เกิดข้อผิดพลาด: ${error.message}`, 'error');
+            }
+        }
+
+        // Drag and drop functionality
+        const uploadArea = document.getElementById('uploadArea');
+        
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+        
+        uploadArea.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+        });
+        
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|webm|mkv|m4v)$/i)) {
+                    currentFile = file;
+                    displayFileInfo(file);
+                } else {
+                    showStatus('upload-status', '❌ ไฟล์ไม่ใช่ไฟล์วิดีโอที่รองรับ', 'error');
+                }
+            }
+        });
+
+        // Auto-test connection on page load
+        window.onload = function() {
+            testConnection();
+        };
+    </script>
+</body>
+</html> 
