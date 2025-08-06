@@ -36,9 +36,9 @@ class Settings(BaseSettings):
     TASK_TIMEOUT: int = int(os.getenv("TASK_TIMEOUT", "14400"))  # 4 hours
     
     # External Services
-    WHISPER_SERVICE_URL: str = os.getenv("WHISPER_SERVICE_URL", "http://localhost:5001")
-    TTS_SERVICE_URL: str = os.getenv("TTS_SERVICE_URL", "http://localhost:5002")
-    TRANSLATION_SERVICE_URL: str = os.getenv("TRANSLATION_SERVICE_URL", "http://localhost:5000")
+    WHISPER_SERVICE_URL: str = os.getenv("WHISPER_SERVICE_URL", "http://docker-whisper-service-1:5001")
+    TTS_SERVICE_URL: str = os.getenv("TTS_SERVICE_URL", "http://docker-tts-service-1:5002")
+    TRANSLATION_SERVICE_URL: str = os.getenv("TRANSLATION_SERVICE_URL", "http://docker-libretranslate-1:5000")
     
     # Whisper Configuration
     WHISPER_MODEL: str = os.getenv("WHISPER_MODEL", "medium")

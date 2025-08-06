@@ -14,17 +14,42 @@ function App() {
   const [processedVideo, setProcessedVideo] = useState(null); 
   const [currentPage, setCurrentPage] = useState('main'); // main, dashboard, history, settings
 
-  const handleTaskStart = (taskData) => { 
-    // เพิ่มข้อมูลภาษาเข้าไปใน task
-    const enhancedTaskData = {
-      ...taskData,
-      source_language: taskData.source_language || 'auto',
-      target_language: taskData.target_language || 'th',
-      created_at: new Date().toISOString()
-    };
-    
-    setCurrentTask(enhancedTaskData); 
-    setVideoUrl(taskData.youtube_url); 
+  const handleTaskStart = async (taskData) => { 
+    try {
+      // ส่ง request ไปยัง backend เพื่อเริ่มการแปล
+      const apiService = (await import('./services/api')).default;
+      
+      let response;
+      if (taskData.file_path) {
+        // File upload translation
+        response = await apiService.startTranslation({
+          file_path: taskData.file_path,
+          target_language: taskData.target_language || 'th'
+        });
+      } else {
+        // YouTube URL translation
+        response = await apiService.startTranslation({
+          youtube_url: taskData.youtube_url,
+          target_language: taskData.target_language || 'th'
+        });
+      }
+      
+      // ใช้ task ID จาก backend
+      const enhancedTaskData = {
+        ...taskData,
+        task_id: response.task_id,
+        source_language: taskData.source_language || 'auto',
+        target_language: taskData.target_language || 'th',
+        created_at: new Date().toISOString()
+      };
+      
+      setCurrentTask(enhancedTaskData); 
+      setVideoUrl(taskData.youtube_url || taskData.file_path); 
+      
+    } catch (error) {
+      console.error('Error starting translation task:', error);
+      throw error;
+    }
   }; 
  
   const handleTaskComplete = (result) => setProcessedVideo(result); 

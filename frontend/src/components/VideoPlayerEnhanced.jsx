@@ -1,4 +1,4 @@
-// VideoPlayer component with language information
+// Enhanced VideoPlayer component with better error handling and fallbacks
 import React, { useState, useEffect, useRef } from 'react';
 
 export default function VideoPlayer({
@@ -63,30 +63,23 @@ export default function VideoPlayer({
         return;
       }
 
-      // ตรวจสอบไฟล์ - ใช้ full URL หรือ relative URL
+      // ตรวจสอบไฟล์
       if (processedVideo?.video_url) {
         try {
-          // สร้าง full URL ถ้าเป็น relative path
-          let videoUrl = processedVideo.video_url;
-          if (videoUrl.startsWith('/')) {
-            videoUrl = `http://localhost:8000${videoUrl}`;
-          }
-          
-          const fileResponse = await fetch(videoUrl, { method: 'HEAD' });
+          const fileResponse = await fetch(processedVideo.video_url, { method: 'HEAD' });
           if (fileResponse.ok) {
             const contentLength = fileResponse.headers.get('content-length');
             const contentType = fileResponse.headers.get('content-type');
             setFileInfo({
               size: contentLength ? parseInt(contentLength) : 0,
               type: contentType || 'unknown',
-              exists: true,
-              url: videoUrl
+              exists: true
             });
           } else {
-            setFileInfo({ exists: false, error: `HTTP ${fileResponse.status}`, url: videoUrl });
+            setFileInfo({ exists: false, error: `HTTP ${fileResponse.status}` });
           }
         } catch (fileError) {
-          setFileInfo({ exists: false, error: fileError.message, url: processedVideo.video_url });
+          setFileInfo({ exists: false, error: fileError.message });
         }
       }
     } catch (error) {
@@ -166,12 +159,7 @@ export default function VideoPlayer({
 
   const handleDownloadVideo = () => {
     if (processedVideo?.video_url) {
-      // สร้าง full URL สำหรับการดาวน์โหลด
-      let downloadUrl = processedVideo.video_url;
-      if (downloadUrl.startsWith('/')) {
-        downloadUrl = `http://localhost:8000${downloadUrl}`;
-      }
-      window.open(downloadUrl, '_blank');
+      window.open(processedVideo.video_url, '_blank');
     }
   };
 
@@ -321,7 +309,7 @@ export default function VideoPlayer({
                   onCanPlay={handleVideoCanPlay}
                   onLoadedMetadata={handleVideoLoadedMetadata}
                 >
-                  <source src={processedVideo.video_url.startsWith('/') ? `http://localhost:8000${processedVideo.video_url}` : processedVideo.video_url} type="video/mp4" />
+                  <source src={processedVideo.video_url} type="video/mp4" />
                   <p className="text-center text-gray-500 p-4">
                     ไม่สามารถเล่นวิดีโอได้ กรุณาใช้ปุ่มดาวน์โหลดด้านล่าง
                   </p>

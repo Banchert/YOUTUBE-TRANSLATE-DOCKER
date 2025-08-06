@@ -44,6 +44,7 @@ class TTSRequest(BaseModel):
     language: str = "th"
     voice_type: str = "female"
     use_edge_tts: bool = True
+    speech_rate: float = 0.85  # Dynamic speech rate from audio analysis
 
 @app.get("/health")
 async def health_check():
@@ -65,17 +66,31 @@ async def synthesize_speech(request: TTSRequest):
         output_filename = f"tts_{uuid.uuid4().hex}.mp3"
         output_path = os.path.join("/app/uploads", output_filename)
         
-        logger.info(f"Synthesizing text ({len(request.text)} chars) in {request.language}")
+        logger.info(f"Synthesizing text ({len(request.text)} chars) in {request.language} with speech_rate {request.speech_rate}")
         
         if request.use_edge_tts and request.language in EDGE_VOICES:
-            # Use Microsoft Edge TTS
+            # Use Microsoft Edge TTS with dynamic speech rate
             voice = EDGE_VOICES[request.language]
-            communicate = edge_tts.Communicate(request.text, voice)
+            
+            # Add SSML for better speech control with dynamic rate
+            ssml_text = f"""
+            <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{request.language}">
+                <voice name="{voice}">
+                    <prosody rate="{request.speech_rate}" pitch="0%" volume="100%">
+                        {request.text}
+                    </prosody>
+                </voice>
+            </speak>
+            """
+            
+            communicate = edge_tts.Communicate(ssml_text, voice)
             await communicate.save(output_path)
+            logger.info(f"Used Edge TTS with voice {voice} and dynamic speed (rate={request.speech_rate})")
         else:
-            # Fallback to Google TTS
-            tts = gTTS(text=request.text, lang=request.language[:2], slow=False)
+            # Fallback to Google TTS with slower speed
+            tts = gTTS(text=request.text, lang=request.language[:2], slow=True)
             tts.save(output_path)
+            logger.info(f"Used Google TTS with slow=True for better clarity")
         
         if not os.path.exists(output_path):
             raise HTTPException(status_code=500, detail="Failed to generate audio")

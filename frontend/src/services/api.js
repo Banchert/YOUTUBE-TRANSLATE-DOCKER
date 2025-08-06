@@ -49,15 +49,23 @@ class ApiService {
 
   // Start translation task
   async startTranslation(data) {
-    return this.request('/translate', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    // Check if it's a file upload or YouTube URL
+    if (data.file_path) {
+      return this.request('/translate-file', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    } else {
+      return this.request('/translate', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    }
   }
 
   // Get task status
   async getTaskStatus(taskId) {
-    return this.request(`/tasks/${taskId}`);
+    return this.request(`/status/${taskId}`);
   }
 
   // Cancel task
@@ -132,7 +140,7 @@ class ApiService {
   // Get download URL
   getDownloadUrl(taskId, type) {
     const endpoints = {
-      video: `/download/${taskId}/video`,
+      video: `/download/${taskId}`,
       audio: `/download/${taskId}/audio`,
       subtitle: `/download/${taskId}/subtitle`,
     };
@@ -222,10 +230,10 @@ class ApiService {
   }
 
   // Create share link
-  async createShareLink(taskId) {
+  async createShareLink(data) {
     return this.request('/share', {
       method: 'POST',
-      body: JSON.stringify({ task_id: taskId }),
+      body: JSON.stringify(data),
     });
   }
 

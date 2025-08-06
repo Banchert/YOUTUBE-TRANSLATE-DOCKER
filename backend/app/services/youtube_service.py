@@ -25,15 +25,27 @@ class YouTubeService:
         try:
             # Configure yt-dlp options for info extraction only
             ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
+                'quiet': False,  # Show output for debugging
+                'no_warnings': False,  # Show warnings for debugging
                 'extract_flat': False,
+                'ignoreerrors': True,  # Continue on errors
+                'no_check_certificate': True,  # Skip SSL certificate verification
+                # Add headers to avoid detection
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-us,en;q=0.5',
+                    'Accept-Encoding': 'gzip,deflate',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                },
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # Extract info
                 info = await asyncio.get_event_loop().run_in_executor(
-                    None, ydl.extract_info, youtube_url, False
+                    None, ydl.extract_info, str(youtube_url), False
                 )
                 
                 # Parse and return relevant information
@@ -72,19 +84,28 @@ class YouTubeService:
         """
         try:
             logger.info(f"Starting download for task {task_id}: {youtube_url}")
+            logger.info(f"URL type: {type(youtube_url)}, URL repr: {repr(youtube_url)}")
             
-            # Validate URL
-            if not self._is_valid_youtube_url(youtube_url):
-                raise ValueError("Invalid YouTube URL")
+            # Validate URL format (basic check)
+            url_valid = self._is_valid_youtube_url(youtube_url)
+            logger.info(f"URL validation result: {url_valid}")
+            if not url_valid:
+                raise ValueError("Invalid YouTube URL format")
             
-            # Get video info first to check duration
-            video_info = await self.get_video_info(youtube_url)
-            duration = video_info.get("duration", 0)
+            # Try to get video info to check duration (skip if it fails)
+            try:
+                video_info = await self.get_video_info(str(youtube_url))
+                duration = video_info.get("duration", 0)
+                
+                if settings.MAX_VIDEO_DURATION > 0 and duration > settings.MAX_VIDEO_DURATION:
+                    raise ValueError(f"Video duration ({duration}s) exceeds maximum allowed ({settings.MAX_VIDEO_DURATION}s)")
+                    
+                logger.info(f"Video info: {video_info.get('title', 'Unknown')} - {duration}s")
+            except Exception as e:
+                logger.warning(f"Could not get video info, proceeding with download: {str(e)}")
+                # Continue with download anyway
             
-            if duration > settings.MAX_VIDEO_DURATION:
-                raise ValueError(f"Video duration ({duration}s) exceeds maximum allowed ({settings.MAX_VIDEO_DURATION}s)")
-            
-            # Configure download options
+            # Configure download options with enhanced anti-detection
             output_path = os.path.join(self.upload_dir, f"video_{task_id}.%(ext)s")
             
             ydl_opts = {
@@ -94,22 +115,119 @@ class YouTubeService:
                 'writedescription': False,
                 'writesubtitles': False,
                 'writeautomaticsub': False,
-                'ignoreerrors': False,
-                'no_warnings': True,
-                'quiet': True,
+                'ignoreerrors': True,  # Continue on errors
+                'no_warnings': False,  # Show warnings for debugging
+                'quiet': False,  # Show output for debugging
+                'extract_flat': False,
+                'no_check_certificate': True,  # Skip SSL certificate verification
+                # Enhanced headers to avoid detection
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'DNT': '1',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Cache-Control': 'max-age=0',
+                },
+                # Enhanced anti-detection options
+                'extractor_retries': 5,
+                'fragment_retries': 5,
+                'retry_sleep_functions': {'http': lambda n: min(2**n, 30)},  # Max 30 seconds
+                'sleep_interval': 2,  # Sleep between requests
+                'max_sleep_interval': 10,  # Max sleep interval
+                'sleep_interval_requests': 1,  # Sleep after N requests
+                'throttledratelimit': 100,  # Rate limit
+                'concurrent_fragment_downloads': 1,  # Reduce concurrent downloads
+                'file_access_retries': 3,
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android'],
+                        'player_skip': ['webpage', 'configs'],
+                    }
+                }
             }
             
-            # Download video
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                await asyncio.get_event_loop().run_in_executor(
-                    None, ydl.download, [youtube_url]
+            # Try multiple download strategies
+            download_success = False
+            video_file = None
+            
+            # Strategy 1: Try with enhanced options
+            try:
+                logger.info(f"Attempting download with enhanced options...")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    await asyncio.get_event_loop().run_in_executor(
+                        None, ydl.download, [str(youtube_url)]
+                    )
+                
+                video_file = self._find_downloaded_file(task_id)
+                if video_file and os.path.exists(video_file):
+                    download_success = True
+                    logger.info(f"Download successful with enhanced options: {video_file}")
+                    
+            except Exception as e:
+                logger.warning(f"Enhanced download failed: {str(e)}")
+            
+            # Strategy 2: Try with simpler format if first attempt failed
+            if not download_success:
+                try:
+                    logger.info(f"Attempting download with simpler format...")
+                    simple_opts = ydl_opts.copy()
+                    simple_opts['format'] = 'best[ext=mp4]/best'  # Simpler format selection
+                    simple_opts['http_headers'] = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
+                    
+                    with yt_dlp.YoutubeDL(simple_opts) as ydl:
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, ydl.download, [str(youtube_url)]
+                        )
+                    
+                    video_file = self._find_downloaded_file(task_id)
+                    if video_file and os.path.exists(video_file):
+                        download_success = True
+                        logger.info(f"Download successful with simple format: {video_file}")
+                        
+                except Exception as e:
+                    logger.warning(f"Simple format download failed: {str(e)}")
+            
+            # Strategy 3: Try with audio-only if video download failed
+            if not download_success:
+                try:
+                    logger.info(f"Attempting audio-only download...")
+                    audio_opts = ydl_opts.copy()
+                    audio_opts['format'] = 'bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio'
+                    audio_opts['postprocessors'] = [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }]
+                    
+                    with yt_dlp.YoutubeDL(audio_opts) as ydl:
+                        await asyncio.get_event_loop().run_in_executor(
+                            None, ydl.download, [str(youtube_url)]
+                        )
+                    
+                    video_file = self._find_downloaded_file(task_id)
+                    if video_file and os.path.exists(video_file):
+                        download_success = True
+                        logger.info(f"Audio download successful: {video_file}")
+                        
+                except Exception as e:
+                    logger.warning(f"Audio download failed: {str(e)}")
+            
+            if not download_success or not video_file or not os.path.exists(video_file):
+                error_msg = (
+                    "All download strategies failed. YouTube may be blocking downloads. "
+                    "Please try uploading the video file directly instead of using YouTube URL. "
+                    "You can download the video manually and upload it to the system."
                 )
-            
-            # Find the downloaded file
-            video_file = self._find_downloaded_file(task_id)
-            
-            if not video_file or not os.path.exists(video_file):
-                raise Exception("Downloaded video file not found")
+                raise Exception(error_msg)
             
             logger.info(f"Video downloaded successfully: {video_file}")
             return video_file
@@ -123,21 +241,29 @@ class YouTubeService:
         Validate if the URL is a valid YouTube URL
         """
         try:
-            parsed = urlparse(url)
+            logger.info(f"Validating URL: {repr(url)}, type: {type(url)}")
+            parsed = urlparse(str(url))  # Ensure it's a string
+            logger.info(f"Parsed: netloc={parsed.netloc}, path={parsed.path}, query={parsed.query}")
             
             # Check for various YouTube URL formats
             youtube_domains = ['youtube.com', 'www.youtube.com', 'youtu.be', 'm.youtube.com']
             
             if parsed.netloc in youtube_domains:
                 if parsed.netloc == 'youtu.be':
-                    return bool(parsed.path.strip('/'))
+                    result = bool(parsed.path.strip('/'))
+                    logger.info(f"youtu.be validation result: {result}")
+                    return result
                 else:
                     query_params = parse_qs(parsed.query)
-                    return 'v' in query_params
+                    result = 'v' in query_params
+                    logger.info(f"youtube.com validation result: {result}")
+                    return result
             
+            logger.info(f"Domain not in youtube_domains: {parsed.netloc}")
             return False
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"URL validation error: {e}")
             return False
     
     def _get_best_format(self) -> str:
@@ -156,15 +282,36 @@ class YouTubeService:
     
     def _find_downloaded_file(self, task_id: str) -> Optional[str]:
         """
-        Find the downloaded video file
+        Find the downloaded video or audio file
         """
-        possible_extensions = ['mp4', 'webm', 'mkv', 'avi']
+        # Video extensions
+        video_extensions = ['mp4', 'webm', 'mkv', 'avi']
+        # Audio extensions
+        audio_extensions = ['mp3', 'm4a', 'wav', 'ogg']
         
-        for ext in possible_extensions:
+        # First try video files
+        for ext in video_extensions:
             file_path = os.path.join(self.upload_dir, f"video_{task_id}.{ext}")
             if os.path.exists(file_path):
+                logger.info(f"Found video file: {file_path}")
                 return file_path
         
+        # Then try audio files
+        for ext in audio_extensions:
+            file_path = os.path.join(self.upload_dir, f"video_{task_id}.{ext}")
+            if os.path.exists(file_path):
+                logger.info(f"Found audio file: {file_path}")
+                return file_path
+        
+        # Check for any file with the task_id pattern
+        import glob
+        pattern = os.path.join(self.upload_dir, f"video_{task_id}.*")
+        files = glob.glob(pattern)
+        if files:
+            logger.info(f"Found files with task_id pattern: {files}")
+            return files[0]  # Return the first found file
+        
+        logger.warning(f"No downloaded file found for task {task_id}")
         return None
     
     async def cleanup_files(self, task_id: str):

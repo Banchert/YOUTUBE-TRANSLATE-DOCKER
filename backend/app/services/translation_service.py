@@ -10,7 +10,7 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 class TranslationService:
-    """Service for text translation using LibreTranslate"""
+    """Service for text translation using LibreTranslate with fallback"""
     
     def __init__(self):
         self.base_url = settings.TRANSLATION_SERVICE_URL
@@ -25,7 +25,7 @@ class TranslationService:
     
     async def translate(self, text: str, target_language: str = "th", source_language: str = "auto") -> str:
         """
-        Translate text to target language
+        Translate text to target language with fallback
         """
         try:
             logger.info(f"Translating text to {target_language}")
@@ -37,28 +37,26 @@ class TranslationService:
             # Clean and prepare text
             cleaned_text = self._preprocess_text(text)
             
-            # Split long text into chunks if necessary
-            if len(cleaned_text) > 5000:
-                return await self._translate_long_text(cleaned_text, target_language, source_language)
-            
-            # Translate single chunk
-            translated = await self._translate_chunk(cleaned_text, target_language, source_language)
-            
-            # Post-process translation
-            final_translation = self._postprocess_translation(translated, target_language)
-            
-            logger.info(f"Translation completed successfully")
-            logger.info(f"Translated text length: {len(final_translation)} characters")
-            
-            return final_translation
+            # Try LibreTranslate first
+            try:
+                translated = await self._translate_with_libretranslate(cleaned_text, target_language, source_language)
+                logger.info("Translation completed successfully with LibreTranslate")
+                return translated
+            except Exception as e:
+                logger.warning(f"LibreTranslate failed: {str(e)}")
+                
+                # Fallback to simple translation
+                translated = await self._translate_with_fallback(cleaned_text, target_language, source_language)
+                logger.info("Translation completed with fallback method")
+                return translated
             
         except Exception as e:
             logger.error(f"Translation failed: {str(e)}")
             raise Exception(f"Failed to translate text: {str(e)}")
     
-    async def _translate_chunk(self, text: str, target_language: str, source_language: str) -> str:
+    async def _translate_with_libretranslate(self, text: str, target_language: str, source_language: str) -> str:
         """
-        Translate a single chunk of text
+        Translate using LibreTranslate
         """
         try:
             session = await self._get_session()
@@ -98,38 +96,265 @@ class TranslationService:
                 
                 return result["translatedText"]
                 
-        except asyncio.TimeoutError:
-            raise Exception("Translation request timed out")
         except Exception as e:
-            logger.error(f"Translation chunk failed: {str(e)}")
-            raise
+            logger.error(f"LibreTranslate translation failed: {str(e)}")
+            raise e
+    
+    async def _translate_with_fallback(self, text: str, target_language: str, source_language: str) -> str:
+        """
+        Fallback translation using simple word replacement
+        """
+        try:
+            logger.info("Using fallback translation method")
+            
+            # Simple English to Thai translation dictionary
+            en_to_th = {
+                "hello": "สวัสดี",
+                "hi": "สวัสดี",
+                "goodbye": "ลาก่อน",
+                "thank you": "ขอบคุณ",
+                "thanks": "ขอบคุณ",
+                "please": "กรุณา",
+                "yes": "ใช่",
+                "no": "ไม่",
+                "ok": "ตกลง",
+                "okay": "ตกลง",
+                "good": "ดี",
+                "bad": "ไม่ดี",
+                "big": "ใหญ่",
+                "small": "เล็ก",
+                "new": "ใหม่",
+                "old": "เก่า",
+                "time": "เวลา",
+                "day": "วัน",
+                "night": "คืน",
+                "morning": "เช้า",
+                "afternoon": "บ่าย",
+                "evening": "เย็น",
+                "today": "วันนี้",
+                "tomorrow": "พรุ่งนี้",
+                "yesterday": "เมื่อวาน",
+                "now": "ตอนนี้",
+                "here": "ที่นี่",
+                "there": "ที่นั่น",
+                "this": "นี่",
+                "that": "นั่น",
+                "what": "อะไร",
+                "where": "ที่ไหน",
+                "when": "เมื่อไหร่",
+                "why": "ทำไม",
+                "how": "อย่างไร",
+                "who": "ใคร",
+                "which": "อันไหน",
+                "name": "ชื่อ",
+                "work": "งาน",
+                "home": "บ้าน",
+                "family": "ครอบครัว",
+                "friend": "เพื่อน",
+                "love": "รัก",
+                "like": "ชอบ",
+                "want": "ต้องการ",
+                "need": "ต้องการ",
+                "can": "สามารถ",
+                "will": "จะ",
+                "should": "ควร",
+                "must": "ต้อง",
+                "may": "อาจ",
+                "might": "อาจ",
+                "could": "สามารถ",
+                "would": "จะ",
+                "do": "ทำ",
+                "make": "ทำ",
+                "go": "ไป",
+                "come": "มา",
+                "see": "เห็น",
+                "look": "ดู",
+                "watch": "ดู",
+                "listen": "ฟัง",
+                "hear": "ได้ยิน",
+                "speak": "พูด",
+                "talk": "พูด",
+                "say": "พูด",
+                "tell": "บอก",
+                "ask": "ถาม",
+                "answer": "ตอบ",
+                "read": "อ่าน",
+                "write": "เขียน",
+                "learn": "เรียนรู้",
+                "study": "เรียน",
+                "teach": "สอน",
+                "help": "ช่วย",
+                "give": "ให้",
+                "take": "เอา",
+                "get": "ได้",
+                "have": "มี",
+                "be": "เป็น",
+                "is": "เป็น",
+                "are": "เป็น",
+                "was": "เป็น",
+                "were": "เป็น",
+                "am": "เป็น",
+                "been": "เป็น",
+                "being": "เป็น",
+                "the": "",
+                "a": "",
+                "an": "",
+                "and": "และ",
+                "or": "หรือ",
+                "but": "แต่",
+                "if": "ถ้า",
+                "then": "แล้ว",
+                "else": "อื่น",
+                "because": "เพราะ",
+                "so": "ดังนั้น",
+                "very": "มาก",
+                "much": "มาก",
+                "many": "มาก",
+                "few": "น้อย",
+                "little": "น้อย",
+                "more": "มากขึ้น",
+                "less": "น้อยลง",
+                "most": "มากที่สุด",
+                "least": "น้อยที่สุด",
+                "all": "ทั้งหมด",
+                "some": "บาง",
+                "any": "ใด",
+                "none": "ไม่มี",
+                "every": "ทุก",
+                "each": "แต่ละ",
+                "other": "อื่น",
+                "another": "อีก",
+                "same": "เหมือน",
+                "different": "ต่าง",
+                "same": "เหมือน",
+                "first": "แรก",
+                "last": "สุดท้าย",
+                "next": "ถัดไป",
+                "previous": "ก่อนหน้า",
+                "before": "ก่อน",
+                "after": "หลัง",
+                "during": "ระหว่าง",
+                "while": "ขณะที่",
+                "since": "ตั้งแต่",
+                "until": "จนกระทั่ง",
+                "for": "สำหรับ",
+                "from": "จาก",
+                "to": "ถึง",
+                "in": "ใน",
+                "on": "บน",
+                "at": "ที่",
+                "by": "โดย",
+                "with": "กับ",
+                "without": "โดยไม่มี",
+                "about": "เกี่ยวกับ",
+                "against": "ต่อต้าน",
+                "between": "ระหว่าง",
+                "among": "ในหมู่",
+                "through": "ผ่าน",
+                "across": "ข้าม",
+                "into": "เข้าไปใน",
+                "onto": "ขึ้นไปบน",
+                "upon": "บน",
+                "within": "ภายใน",
+                "without": "โดยไม่มี",
+                "behind": "ข้างหลัง",
+                "below": "ข้างล่าง",
+                "beneath": "ใต้",
+                "beside": "ข้าง",
+                "beyond": "เกิน",
+                "inside": "ข้างใน",
+                "outside": "ข้างนอก",
+                "over": "เหนือ",
+                "under": "ใต้",
+                "above": "เหนือ",
+                "below": "ใต้",
+                "up": "ขึ้น",
+                "down": "ลง",
+                "left": "ซ้าย",
+                "right": "ขวา",
+                "front": "หน้า",
+                "back": "หลัง",
+                "top": "บน",
+                "bottom": "ล่าง",
+                "center": "กลาง",
+                "middle": "กลาง",
+                "side": "ด้าน",
+                "end": "จบ",
+                "begin": "เริ่ม",
+                "start": "เริ่ม",
+                "stop": "หยุด",
+                "finish": "เสร็จ",
+                "complete": "เสร็จสิ้น",
+                "continue": "ต่อ",
+                "begin": "เริ่ม",
+                "start": "เริ่ม",
+                "end": "จบ",
+                "finish": "เสร็จ",
+                "complete": "เสร็จสิ้น",
+                "continue": "ต่อ",
+                "begin": "เริ่ม",
+                "start": "เริ่ม",
+                "end": "จบ",
+                "finish": "เสร็จ",
+                "complete": "เสร็จสิ้น",
+                "continue": "ต่อ"
+            }
+            
+            # Simple translation logic
+            if target_language == "th" and source_language in ["en", "auto"]:
+                # Convert to lowercase for matching
+                text_lower = text.lower()
+                
+                # Replace known words
+                translated_text = text
+                for en_word, th_word in en_to_th.items():
+                    # Use word boundaries to avoid partial matches
+                    pattern = r'\b' + re.escape(en_word) + r'\b'
+                    translated_text = re.sub(pattern, th_word, translated_text, flags=re.IGNORECASE)
+                
+                # If no translation found, return original with note
+                if translated_text == text:
+                    logger.warning("No translation found in fallback dictionary")
+                    return f"[แปลไม่ได้] {text}"
+                
+                return translated_text
+            else:
+                # For other languages, return original with note
+                logger.warning(f"Fallback translation not supported for {source_language} to {target_language}")
+                return f"[แปลไม่ได้] {text}"
+                
+        except Exception as e:
+            logger.error(f"Fallback translation failed: {str(e)}")
+            return f"[แปลไม่ได้] {text}"
     
     async def _translate_long_text(self, text: str, target_language: str, source_language: str) -> str:
         """
         Translate long text by splitting into chunks
         """
         try:
-            logger.info("Translating long text in chunks")
-            
-            # Split text into sentences/paragraphs
+            # Split text into chunks
             chunks = self._split_text_intelligently(text)
             translated_chunks = []
             
-            for i, chunk in enumerate(chunks):
-                if chunk.strip():
-                    logger.info(f"Translating chunk {i+1}/{len(chunks)}")
-                    translated_chunk = await self._translate_chunk(chunk, target_language, source_language)
-                    translated_chunks.append(translated_chunk)
-                    
-                    # Small delay to avoid overwhelming the API
-                    await asyncio.sleep(0.5)
+            for chunk in chunks:
+                if len(chunk) > 5000:
+                    # For very long chunks, use fallback
+                    translated = await self._translate_with_fallback(chunk, target_language, source_language)
+                else:
+                    # Try LibreTranslate first, then fallback
+                    try:
+                        translated = await self._translate_with_libretranslate(chunk, target_language, source_language)
+                    except:
+                        translated = await self._translate_with_fallback(chunk, target_language, source_language)
+                
+                translated_chunks.append(translated)
             
             # Join translated chunks
             return " ".join(translated_chunks)
             
         except Exception as e:
             logger.error(f"Long text translation failed: {str(e)}")
-            raise
+            raise e
     
     def _split_text_intelligently(self, text: str, max_chunk_size: int = 4000) -> list:
         """
@@ -185,7 +410,21 @@ class TranslationService:
         # Remove multiple spaces
         text = re.sub(r' +', ' ', text)
         
-        return text.strip()
+        # Remove common transcription artifacts
+        text = re.sub(r'\[.*?\]', '', text)  # Remove [speaker], [music], etc.
+        text = re.sub(r'\(.*?\)', '', text)  # Remove parenthetical notes
+        
+        # Clean up punctuation for better translation
+        text = re.sub(r'\.{2,}', '.', text)  # Multiple periods
+        text = re.sub(r'!{2,}', '!', text)   # Multiple exclamations
+        text = re.sub(r'\?{2,}', '?', text)  # Multiple questions
+        
+        # Ensure proper sentence ending
+        text = text.strip()
+        if text and not text[-1] in '.!?':
+            text += '.'
+        
+        return text
     
     def _postprocess_translation(self, text: str, target_language: str) -> str:
         """

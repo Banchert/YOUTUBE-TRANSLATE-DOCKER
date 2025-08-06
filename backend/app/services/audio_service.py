@@ -67,69 +67,230 @@ class AudioService:
             logger.error(f"Audio extraction failed for task {task_id}: {str(e)}")
             raise Exception(f"Failed to extract audio: {str(e)}")
     
-    async def speech_to_text(self, audio_path: str, task_id: str) -> str:
+    async def speech_to_text(self, audio_path: str, task_id: str, source_language: str = "en") -> str:
         """
         Convert speech to text using external Whisper service
+        Fixed: บังคับให้ใช้ภาษาต้นฉบับที่กำหนด แทนการ auto-detect
+        Enhanced: วิเคราะห์ความเร็วเสียงเพื่อปรับ TTS
         """
         try:
-            logger.info(f"Starting speech-to-text for task {task_id}")
+            logger.info(f"Starting speech-to-text for task {task_id} with language: {source_language}")
             
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-            # Call external Whisper service
+            # Analyze audio for speech rate detection FIRST
+            speech_rate_info = await self._analyze_speech_rate(audio_path)
+            logger.info(f"Speech rate analysis: {speech_rate_info}")
+            
+            # Store speech rate info for TTS adjustment
+            from app.main import tasks  # Import here to avoid circular import
+            if task_id in tasks:
+                tasks[task_id]["speech_rate_info"] = speech_rate_info
+            
+            # Call external Whisper service with explicit language
             url = f"{self.whisper_service_url}/transcribe"
             
             with open(audio_path, 'rb') as audio_file:
                 files = {'file': audio_file}
-                response = requests.post(url, files=files)
+                data = {
+                    'language': source_language,  # บังคับภาษาต้นฉบับ
+                    'task': 'transcribe'  # ไม่ใช่ translate
+                }
+                
+                logger.info(f"Sending to Whisper with FORCED language: {source_language}")
+                response = requests.post(url, files=files, data=data)
                 
                 if response.status_code != 200:
                     raise Exception(f"Whisper service error: {response.text}")
                 
                 result = response.json()
                 transcript = result.get('text', '')
+                detected_language = result.get('language', source_language)
+                
+                # Validate language enforcement
+                if detected_language != source_language:
+                    logger.warning(f"Language mismatch! Requested: {source_language}, Detected: {detected_language}")
+                    logger.warning("This may indicate the source language setting is incorrect")
+                
+                # บันทึกข้อมูลการถอดเสียง
+                transcript_data = {
+                    'text': transcript,
+                    'language': detected_language,
+                    'requested_language': source_language,
+                    'task_id': task_id,
+                    'segments': result.get('segments', [])
+                }
                 
                 # Save transcript to file
                 transcript_path = os.path.join(self.upload_dir, f"transcript_{task_id}.json")
                 with open(transcript_path, 'w', encoding='utf-8') as f:
-                    json.dump(result, f, ensure_ascii=False, indent=2)
+                    json.dump(transcript_data, f, ensure_ascii=False, indent=2)
                 
-                logger.info(f"Speech-to-text completed for task {task_id}")
+                logger.info(f"Speech-to-text completed for task {task_id}. Detected: {detected_language}, Text length: {len(transcript)}")
+                
+                # ตรวจสอบว่าภาษาที่ตรวจพบตรงกับที่ต้องการหรือไม่
+                if detected_language != source_language:
+                    logger.warning(f"Language mismatch! Requested: {source_language}, Detected: {detected_language}")
+                
                 return transcript
                 
         except Exception as e:
             logger.error(f"Speech-to-text failed for task {task_id}: {str(e)}")
             raise Exception(f"Failed to convert speech to text: {str(e)}")
     
-    async def speech_to_text_with_timestamps(self, audio_path: str, task_id: str) -> Dict[str, Any]:
+    async def _analyze_speech_rate(self, audio_path: str) -> dict:
         """
-        Convert speech to text with timestamps using external Whisper service
+        Analyze speech rate from audio file to determine optimal TTS speed
+        Returns speed adjustment info for TTS
         """
         try:
-            logger.info(f"Starting speech-to-text with timestamps for task {task_id}")
+            # Try to use librosa for audio analysis
+            try:
+                import librosa
+                import numpy as np
+                
+                # Load audio file
+                y, sr = librosa.load(audio_path, sr=22050)
+                duration = librosa.get_duration(y=y, sr=sr)
+                
+                # Detect voice activity using RMS energy
+                rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=512)[0]
+                rms_threshold = np.percentile(rms, 30)  # 30th percentile as threshold
+                
+                # Count frames with voice activity
+                voice_frames = np.sum(rms > rms_threshold)
+                total_frames = len(rms)
+                voice_ratio = voice_frames / total_frames if total_frames > 0 else 0
+                
+                # Estimate speech segments
+                speech_duration = duration * voice_ratio
+                
+                # Calculate tempo using onset detection
+                tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+                
+                # Estimate speaking rate (rough calculation)
+                if speech_duration > 0:
+                    # Estimate syllables based on tempo and duration
+                    estimated_syllables = (tempo * speech_duration) / 60 * 2  # rough estimation
+                    estimated_words = estimated_syllables / 2   # ~2 syllables per word average
+                    words_per_minute = (estimated_words / speech_duration) * 60 if speech_duration > 0 else 120
+                else:
+                    words_per_minute = 120  # default
+                
+                analysis_method = "librosa_advanced"
+                
+            except ImportError:
+                logger.warning("librosa not available, using basic audio analysis")
+                # Fallback to basic file analysis
+                import wave
+                
+                with wave.open(audio_path, 'rb') as wav_file:
+                    frames = wav_file.getnframes()
+                    sample_rate = wav_file.getframerate()
+                    duration = frames / float(sample_rate)
+                
+                # Basic estimation without advanced audio processing
+                voice_ratio = 0.7  # assume 70% of audio contains speech
+                speech_duration = duration * voice_ratio
+                words_per_minute = 120  # default WPM
+                tempo = 120
+                analysis_method = "basic_wave"
+                
+            # Determine TTS speed adjustment based on original speech rate
+            if words_per_minute > 180:  # Very fast speech
+                tts_rate = 0.6  # Slow down significantly
+                speed_category = "very_fast"
+            elif words_per_minute > 150:  # Fast speech
+                tts_rate = 0.7  # Slow down considerably
+                speed_category = "fast"
+            elif words_per_minute > 130:  # Medium-fast speech
+                tts_rate = 0.8  # Slow down moderately
+                speed_category = "medium_fast"
+            elif words_per_minute > 100:  # Normal speech
+                tts_rate = 0.85  # Slight slowdown
+                speed_category = "normal"
+            elif words_per_minute > 80:   # Slow speech
+                tts_rate = 0.9   # Minimal adjustment
+                speed_category = "slow"
+            else:  # Very slow speech
+                tts_rate = 0.95  # Almost no adjustment
+                speed_category = "very_slow"
+            
+            speech_info = {
+                "duration": duration,
+                "voice_ratio": voice_ratio,
+                "speech_duration": speech_duration,
+                "estimated_wpm": words_per_minute,
+                "tempo": tempo if 'tempo' in locals() else 120,
+                "tts_rate": tts_rate,
+                "speed_category": speed_category,
+                "analysis_method": analysis_method,
+                "recommendation": f"Original speech: {speed_category} ({words_per_minute:.1f} WPM) → TTS rate: {tts_rate}"
+            }
+            
+            logger.info(f"Speech rate analysis: {speed_category} speech ({words_per_minute:.1f} WPM) → TTS rate: {tts_rate}")
+            return speech_info
+            
+        except Exception as e:
+            logger.error(f"Speech rate analysis failed: {e}")
+            return {
+                "duration": 0,
+                "voice_ratio": 0.7,
+                "speech_duration": 0,
+                "estimated_wpm": 120,
+                "tempo": 120,
+                "tts_rate": 0.85,  # Safe default
+                "speed_category": "unknown",
+                "analysis_method": "fallback",
+                "recommendation": "Using default TTS rate due to analysis failure",
+                "error": str(e)
+            }
+    
+    async def speech_to_text_with_timestamps(self, audio_path: str, task_id: str, source_language: str = "en") -> Dict[str, Any]:
+        """
+        Convert speech to text with timestamps using external Whisper service
+        Fixed: บังคับให้ใช้ภาษาต้นฉบับที่กำหนด
+        """
+        try:
+            logger.info(f"Starting speech-to-text with timestamps for task {task_id} with language: {source_language}")
             
             if not os.path.exists(audio_path):
                 raise FileNotFoundError(f"Audio file not found: {audio_path}")
             
-            # Call external Whisper service
+            # Call external Whisper service with explicit language
             url = f"{self.whisper_service_url}/transcribe"
             
             with open(audio_path, 'rb') as audio_file:
                 files = {'file': audio_file}
-                response = requests.post(url, files=files)
+                data = {
+                    'language': source_language,  # บังคับภาษาต้นฉบับ
+                    'task': 'transcribe',  # ไม่ใช่ translate
+                    'word_timestamps': True  # เพิ่ม timestamps ระดับคำ
+                }
+                response = requests.post(url, files=files, data=data)
                 
                 if response.status_code != 200:
                     raise Exception(f"Whisper service error: {response.text}")
                 
                 result = response.json()
+                detected_language = result.get('language', source_language)
+                
+                # เพิ่มข้อมูลเพิ่มเติม
+                result['requested_language'] = source_language
+                result['task_id'] = task_id
                 
                 # Save transcript to file
                 transcript_path = os.path.join(self.upload_dir, f"transcript_{task_id}.json")
                 with open(transcript_path, 'w', encoding='utf-8') as f:
                     json.dump(result, f, ensure_ascii=False, indent=2)
                 
-                logger.info(f"Speech-to-text with timestamps completed for task {task_id}")
+                logger.info(f"Speech-to-text with timestamps completed for task {task_id}. Detected: {detected_language}")
+                
+                # ตรวจสอบความถูกต้องของภาษา
+                if detected_language != source_language:
+                    logger.warning(f"Language mismatch! Requested: {source_language}, Detected: {detected_language}")
+                
                 return result
                 
         except Exception as e:

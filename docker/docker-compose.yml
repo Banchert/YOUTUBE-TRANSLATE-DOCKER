@@ -103,21 +103,26 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - LT_CHAR_LIMIT=25000
-      - LT_REQ_LIMIT=200
-      - LT_BATCH_LIMIT=20
+      - LT_CHAR_LIMIT=50000
+      - LT_REQ_LIMIT=500
+      - LT_BATCH_LIMIT=50
       - LT_THREADS=4
       - LT_FRONTEND_LANGUAGE_SOURCE=auto
       - LT_FRONTEND_LANGUAGE_TARGET=th
+      - LT_UPDATE_MODELS=true
+      - LT_LOAD_ONLY=th,en,zh,ja,ko,es,fr,de
+      - LT_DEBUG=true
+      - LT_API_KEYS=false
+      - LT_MASTER_KEY=your-master-key-here
     networks:
       - app-network
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 4G
         reservations:
-          memory: 1G
+          memory: 2G
 
   # Redis for caching and task queue
   redis:

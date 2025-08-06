@@ -19,6 +19,10 @@ sqlalchemy==2.0.23
 # YouTube video processing
 yt-dlp==2023.11.16
 
+# Audio analysis for speech rate detection
+librosa==0.10.1
+soundfile==0.12.1
+
 # Additional dependencies
 numpy==1.24.3
 

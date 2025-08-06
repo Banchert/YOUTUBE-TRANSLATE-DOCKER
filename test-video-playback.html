@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Playback Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        video {
+            width: 100%;
+            height: auto;
+            background: #000;
+        }
+        .test-info {
+            background: #e3f2fd;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            border-left: 4px solid #2196f3;
+        }
+        .error {
+            background: #ffebee;
+            border-left-color: #f44336;
+            color: #c62828;
+        }
+        .success {
+            background: #e8f5e8;
+            border-left-color: #4caf50;
+            color: #2e7d32;
+        }
+        button {
+            background: #2196f3;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #1976d2;
+        }
+        .log {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 YouTube Video Translator - Video Playback Test</h1>
+        
+        <div class="test-info">
+            <h3>การทดสอบการเล่นวิดีโอในเว็บอินเตอร์เฟซ</h3>
+            <p>หน้านี้จะทดสอบการเล่นวิดีโอที่แปลแล้วผ่านเว็บเบราว์เซอร์</p>
+            <div id="backendWarning" class="error" style="display: none;">
+                <h4>⚠️ Backend ไม่ทำงาน!</h4>
+                <p>กรุณาเริ่ม Docker Services ก่อนทดสอบ:</p>
+                <ol>
+                    <li>เปิด Docker Desktop</li>
+                    <li>รันไฟล์: <code>Quick-Fix-Backend.bat</code></li>
+                    <li>หรือรันคำสั่ง: <code>docker compose -f docker/docker-compose-simple.yml up -d</code></li>
+                    <li>รอ 30 วินาที แล้วรีเฟรชหน้านี้</li>
+                </ol>
+            </div>
+        </div>
+
+        <h2>1. ทดสอบ Demo Video</h2>
+        <video id="demoVideo" controls preload="metadata">
+            <source src="http://localhost:8000/download/task-1754404431054" type="video/mp4">
+            <p>ไม่สามารถเล่นวิดีโอได้ กรุณาตรวจสอบ:</p>
+            <ul>
+                <li>เซิร์ฟเวอร์ Backend ทำงานที่ port 8000</li>
+                <li>ไฟล์วิดีโอมีอยู่จริง</li>
+                <li>การตั้งค่า CORS</li>
+            </ul>
+        </video>
+
+        <div style="margin: 20px 0;">
+            <button onclick="testVideoLoad()">🔄 ทดสอบโหลดวิดีโอ</button>
+            <button onclick="testBackendConnection()">🌐 ทดสอบการเชื่อมต่อ Backend</button>
+            <button onclick="testFileExists()">📁 ทดสอบไฟล์มีอยู่หรือไม่</button>
+            <button onclick="clearLogs()">🧹 เคลียร์ Log</button>
+        </div>
+
+        <div id="logs" class="log"></div>
+
+        <h2>2. ทดสอบ URL แบบต่างๆ</h2>
+        <div>
+            <label>Video URL: </label>
+            <input type="text" id="videoUrl" value="http://localhost:8000/static/final_task-1754404431054.mp4" style="width: 500px; padding: 5px;">
+            <button onclick="loadCustomVideo()">โหลด</button>
+        </div>
+        
+        <div style="margin: 10px 0;">
+            <h3>🔗 URL ทดสอบ:</h3>
+            <button onclick="setUrl('http://localhost:8000/static/final_task-1754404431054.mp4')">Static URL</button>
+            <button onclick="setUrl('http://localhost:8000/download/task-1754404431054')">Download URL</button>
+            <button onclick="testApiTaskStatus()">ทดสอบ Task Status</button>
+        </div>
+
+        <video id="customVideo" controls preload="metadata" style="margin-top: 10px;">
+            <p>โหลดวิดีโอด้วยปุ่มข้างบน</p>
+        </video>
+
+        <h2>3. ข้อมูลการดีบัก</h2>
+        <div class="test-info">
+            <p><strong>User Agent:</strong> <span id="userAgent"></span></p>
+            <p><strong>Video Support:</strong> <span id="videoSupport"></span></p>
+            <p><strong>Network Status:</strong> <span id="networkStatus"></span></p>
+            <p><strong>Current URL:</strong> <span id="currentUrl"></span></p>
+        </div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#f44336' : type === 'success' ? '#4caf50' : '#333';
+            logs.innerHTML += `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        async function testBackendConnection() {
+            log('🌐 ทดสอบการเชื่อมต่อ Backend...', 'info');
+            try {
+                const response = await fetch('http://localhost:8000/health');
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ Backend เชื่อมต่อได้: ${JSON.stringify(data)}`, 'success');
+                    document.getElementById('backendWarning').style.display = 'none';
+                } else {
+                    log(`❌ Backend ตอบกลับ HTTP ${response.status}`, 'error');
+                    showBackendWarning();
+                }
+            } catch (error) {
+                log(`❌ ไม่สามารถเชื่อมต่อ Backend: ${error.message}`, 'error');
+                showBackendWarning();
+            }
+        }
+
+        function showBackendWarning() {
+            const warning = document.getElementById('backendWarning');
+            warning.style.display = 'block';
+            warning.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        async function testFileExists() {
+            log('📁 ทดสอบไฟล์วิดีโอ...', 'info');
+            
+            // ทดสอบ static path
+            try {
+                const staticResponse = await fetch('http://localhost:8000/static/final_task-1754404431054.mp4', { method: 'HEAD' });
+                if (staticResponse.ok) {
+                    const contentLength = staticResponse.headers.get('content-length');
+                    const contentType = staticResponse.headers.get('content-type');
+                    log(`✅ Static file พบ: ${contentType}, ขนาด: ${contentLength} bytes`, 'success');
+                } else {
+                    log(`❌ Static file ไม่พบ: HTTP ${staticResponse.status}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ ไม่สามารถตรวจสอบ static file: ${error.message}`, 'error');
+            }
+            
+            // ทดสอบ download path
+            try {
+                const downloadResponse = await fetch('http://localhost:8000/download/task-1754404431054', { method: 'HEAD' });
+                if (downloadResponse.ok) {
+                    const contentLength = downloadResponse.headers.get('content-length');
+                    const contentType = downloadResponse.headers.get('content-type');
+                    log(`✅ Download endpoint พบ: ${contentType}, ขนาด: ${contentLength} bytes`, 'success');
+                } else {
+                    log(`❌ Download endpoint ไม่พบ: HTTP ${downloadResponse.status}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ ไม่สามารถตรวจสอบ download endpoint: ${error.message}`, 'error');
+            }
+        }
+        
+        function setUrl(url) {
+            document.getElementById('videoUrl').value = url;
+            log(`🔗 เปลี่ยน URL เป็น: ${url}`, 'info');
+        }
+        
+        async function testApiTaskStatus() {
+            log('🔍 ทดสอบ API Task Status...', 'info');
+            try {
+                const response = await fetch('http://localhost:8000/status/task-1754404431054');
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ Task Status: ${JSON.stringify(data, null, 2)}`, 'success');
+                    
+                    // ลองใช้ video_url ถ้ามี
+                    if (data.video_url) {
+                        log(`🎬 พบ video_url: ${data.video_url}`, 'info');
+                        document.getElementById('videoUrl').value = `http://localhost:8000${data.video_url}`;
+                    }
+                } else {
+                    log(`❌ Task Status API ตอบกลับ HTTP ${response.status}`, 'error');
+                }
+            } catch (error) {
+                log(`❌ ไม่สามารถเรียก Task Status API: ${error.message}`, 'error');
+            }
+        }
+
+        function testVideoLoad() {
+            log('🔄 ทดสอบโหลดวิดีโอ...', 'info');
+            const video = document.getElementById('demoVideo');
+            
+            video.onloadstart = () => log('📊 เริ่มโหลดวิดีโอ', 'info');
+            video.onloadedmetadata = () => log('📋 โหลด metadata เสร็จ', 'success');
+            video.oncanplay = () => log('▶️ วิดีโอพร้อมเล่น', 'success');
+            video.onerror = (e) => log(`❌ Error โหลดวิดีโอ: ${e.target.error?.message || 'Unknown error'}`, 'error');
+            
+            video.load(); // Force reload
+        }
+
+        function loadCustomVideo() {
+            const url = document.getElementById('videoUrl').value;
+            const video = document.getElementById('customVideo');
+            
+            log(`🔄 โหลด URL: ${url}`, 'info');
+            
+            video.onloadstart = () => log('📊 เริ่มโหลด custom video', 'info');
+            video.onloadedmetadata = () => log('📋 โหลด custom metadata เสร็จ', 'success');
+            video.oncanplay = () => log('▶️ Custom video พร้อมเล่น', 'success');
+            video.onerror = (e) => log(`❌ Error โหลด custom video: ${e.target.error?.message || 'Unknown error'}`, 'error');
+            
+            video.src = url;
+            video.load();
+        }
+
+        // Initialize debug info
+        document.getElementById('userAgent').textContent = navigator.userAgent;
+        document.getElementById('videoSupport').textContent = document.createElement('video').canPlayType('video/mp4') ? 'MP4 รองรับ' : 'MP4 ไม่รองรับ';
+        document.getElementById('networkStatus').textContent = navigator.onLine ? 'Online' : 'Offline';
+        document.getElementById('currentUrl').textContent = window.location.href;
+
+        // Auto-test on load
+        window.onload = function() {
+            log('🚀 เริ่มการทดสอบ...', 'info');
+            setTimeout(testBackendConnection, 1000);
+            setTimeout(testFileExists, 2000);
+            setTimeout(testVideoLoad, 3000);
+        };
+    </script>
+</body>
+</html>

@@ -7,6 +7,7 @@ const DownloadResult = ({ result, onDownload, onReset }) => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [downloading, setDownloading] = useState({});
   const [shareLink, setShareLink] = useState('');
+  const [showVideoPreview, setShowVideoPreview] = useState(false);
 
   if (!result) return null;
 
@@ -98,20 +99,13 @@ const DownloadResult = ({ result, onDownload, onReset }) => {
       console.error(`Download failed for ${type}:`, error);
       
       // More detailed error message
-      let errorMessage = `การดาวน์โหลด ${type} ล้มเหลว`;
-      if (error.message.includes('404')) {
-        errorMessage += ': ไม่พบไฟล์ (Task อาจยังไม่เสร็จสิ้น)';
-      } else if (error.message.includes('403')) {
-        errorMessage += ': ไม่มีสิทธิ์เข้าถึงไฟล์';
-      } else if (error.message.includes('500')) {
-        errorMessage += ': เซิร์ฟเวอร์เกิดข้อผิดพลาด';
-      } else if (error.message.includes('File not available')) {
-        errorMessage += ': ไฟล์ไม่พร้อมใช้งาน';
-      } else {
-        errorMessage += `: ${error.message}`;
+      let errorMessage = `ไม่สามารถดาวน์โหลด ${type} ได้`;
+      if (error.message.includes('File not available')) {
+        errorMessage = `ไฟล์ ${type} ยังไม่พร้อมใช้งาน`;
+      } else if (error.message.includes('Network')) {
+        errorMessage = `เกิดข้อผิดพลาดในการเชื่อมต่อ`;
       }
       
-      // Show error toast or alert
       if (window.showToast) {
         window.showToast(errorMessage, 'error');
       } else {
@@ -124,350 +118,212 @@ const DownloadResult = ({ result, onDownload, onReset }) => {
 
   const handleShare = async () => {
     try {
+      const response = await apiService.createShareLink({
+        task_id: result.task_id,
+        expires_in: 24 * 60 * 60 // 24 hours
+      });
+      
+      setShareLink(response.data.share_url);
       setShowShareModal(true);
-      
-      // Create share link
-      const response = await apiService.createShareLink(result.task_id);
-      setShareLink(response.share_url || `${window.location.origin}/shared/${result.task_id}`);
-      
     } catch (error) {
-      console.error('Failed to create share link:', error);
-      setShareLink(`${window.location.origin}/shared/${result.task_id}`);
+      console.error('Share failed:', error);
+      if (window.showToast) {
+        window.showToast('ไม่สามารถสร้างลิงก์แชร์ได้', 'error');
+      } else {
+        alert('ไม่สามารถสร้างลิงก์แชร์ได้');
+      }
     }
   };
 
   const copyToClipboard = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
-      alert('คัดลอกลิงก์เรียบร้อยแล้ว');
+      if (window.showToast) {
+        window.showToast('คัดลอกลิงก์แล้ว!', 'success');
+      } else {
+        alert('คัดลอกลิงก์แล้ว!');
+      }
     } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
-      alert('ไม่สามารถคัดลอกลิงก์ได้');
+      console.error('Copy failed:', error);
+      if (window.showToast) {
+        window.showToast('ไม่สามารถคัดลอกลิงก์ได้', 'error');
+      } else {
+        alert('ไม่สามารถคัดลอกลิงก์ได้');
+      }
     }
   };
 
   const getLanguageName = (code) => {
-    const languageMap = {
-      'auto': '🔄 ตรวจจับอัตโนมัติ',
-      'th': '🇹🇭 ไทย',
-      'en': '🇺🇸 อังกฤษ',
-      'zh': '🇨🇳 จีน',
-      'ja': '🇯🇵 ญี่ปุ่น',
-      'ko': '🇰🇷 เกาหลี',
-      'vi': '🇻🇳 เวียดนาม',
-      'id': '🇮🇩 อินโดนีเซีย',
-      'es': '🇪🇸 สเปน',
-      'fr': '🇫🇷 ฝรั่งเศส'
+    const languages = {
+      'th': 'ไทย',
+      'en': 'อังกฤษ',
+      'zh': 'จีน',
+      'ja': 'ญี่ปุ่น',
+      'ko': 'เกาหลี',
+      'es': 'สเปน',
+      'fr': 'ฝรั่งเศส',
+      'de': 'เยอรมัน'
     };
-    return languageMap[code] || code;
+    return languages[code] || code;
   };
 
   const formatDuration = (seconds) => {
-    if (!seconds) return '15:30'; // Default mock duration
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-    }
-    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+    if (!seconds) return 'ไม่ทราบ';
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.6 }}
-      className="max-w-6xl mx-auto"
+      transition={{ duration: 0.5 }}
+      className="bg-white rounded-2xl shadow-xl p-8 border border-gray-100"
     >
       {/* Success Header */}
-      <motion.div
-        className="text-center mb-8"
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.2 }}
-      >
-        <motion.div
-          className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-r from-green-400 to-emerald-500 rounded-full mb-4"
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          transition={{ type: "spring", bounce: 0.5, delay: 0.3 }}
-        >
-          <span className="text-4xl">✅</span>
-        </motion.div>
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 bg-clip-text text-transparent mb-4">
-          แปลสำเร็จแล้ว!
-        </h1>
-        <p className="text-xl text-gray-600">
-          วิดีโอของคุณได้รับการแปลเรียบร้อยแล้ว พร้อมดาวน์โหลด
-        </p>
-      </motion.div>
-
-      {/* Translation Info */}
-      <motion.div
-        className="bg-white/80 backdrop-blur-md rounded-3xl shadow-xl border border-white/20 p-6 mb-8"
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.6, delay: 0.4 }}
-      >
-        <div className="flex items-center justify-center space-x-8">
-          <div className="text-center">
-            <div className="text-sm font-medium text-gray-600 mb-1">ภาษาต้นทาง</div>
-            <div className="text-lg font-bold">{getLanguageName(result.source_language)}</div>
-          </div>
-          <motion.div
-            className="text-green-500"
-            animate={{ x: [0, 10, 0] }}
-            transition={{ duration: 2, repeat: Infinity }}
-          >
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
-            </svg>
-          </motion.div>
-          <div className="text-center">
-            <div className="text-sm font-medium text-gray-600 mb-1">ภาษาปลายทาง</div>
-            <div className="text-lg font-bold">{getLanguageName(result.target_language)}</div>
-          </div>
+      <div className="text-center mb-8">
+        <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+          <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
         </div>
-      </motion.div>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">การแปลเสร็จสิ้น!</h2>
+        <p className="text-gray-600">วิดีโอของคุณพร้อมใช้งานแล้ว</p>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Video Preview */}
-        <motion.div
-          className="lg:col-span-2"
-          initial={{ opacity: 0, x: -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.6, delay: 0.5 }}
-        >
-          <div className="bg-white/80 backdrop-blur-md rounded-3xl shadow-xl border border-white/20 p-6">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="mr-3">🎬</span>
-              ตัวอย่างผลลัพธ์
-            </h2>
+      {/* Video Preview */}
+      <div className="mb-8">
+        <div className="bg-gray-900 rounded-xl overflow-hidden">
+          <video 
+            className="w-full h-64 object-cover"
+            controls
+            poster="/video-poster.jpg"
+            onLoadStart={() => setShowVideoPreview(true)}
+          >
+            <source src={result.video_url} type="video/mp4" />
+            Your browser does not support the video tag.
+          </video>
+        </div>
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={() => setShowVideoPreview(!showVideoPreview)}
+            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+          >
+            {showVideoPreview ? 'ซ่อนตัวอย่าง' : 'ดูตัวอย่าง'}
+          </button>
+        </div>
+      </div>
 
-            {/* Tab Navigation */}
-            <div className="flex bg-gray-100 rounded-2xl p-1 mb-6">
-              {['video', 'original'].map((tab) => (
+      {/* Download Options */}
+      <div className="mb-8">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">ดาวน์โหลดไฟล์</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {downloadOptions.map((option) => (
+            <motion.div
+              key={option.type}
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              className={`bg-gradient-to-br ${option.color} rounded-xl p-6 text-white cursor-pointer transition-all duration-200 hover:shadow-lg`}
+              onClick={() => handleDownload(option.type)}
+            >
+              <div className="text-center">
+                <div className="text-3xl mb-3">{option.icon}</div>
+                <h4 className="font-semibold mb-2">{option.title}</h4>
+                <p className="text-sm opacity-90 mb-3">{option.description}</p>
+                <div className="bg-white bg-opacity-20 rounded-lg p-2 mb-3">
+                  <div className="text-xs opacity-90">รูปแบบ: {option.format}</div>
+                  <div className="text-xs opacity-90">ขนาด: {option.size}</div>
+                </div>
                 <button
-                  key={tab}
-                  onClick={() => setActiveTab(tab)}
-                  className={`flex-1 px-4 py-2 rounded-xl font-medium transition-all duration-300 ${
-                    activeTab === tab
-                      ? 'bg-white text-gray-800 shadow-md'
-                      : 'text-gray-600 hover:text-gray-800'
+                  disabled={downloading[option.type]}
+                  className={`w-full py-2 px-4 rounded-lg font-medium transition-colors duration-200 ${
+                    downloading[option.type]
+                      ? 'bg-white bg-opacity-30 cursor-not-allowed'
+                      : 'bg-white bg-opacity-20 hover:bg-opacity-30'
                   }`}
                 >
-                  {tab === 'video' ? '🎬 วิดีโอที่แปลแล้ว' : '📹 วิดีโอต้นฉบับ'}
-                </button>
-              ))}
-            </div>
-
-            {/* Video Player Area */}
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeTab}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
-                transition={{ duration: 0.3 }}
-                className="aspect-video bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl flex items-center justify-center mb-4"
-              >
-                <div className="text-center text-white">
-                  <div className="text-6xl mb-4">
-                    {activeTab === 'video' ? '🎬' : '📹'}
-                  </div>
-                  <h3 className="text-xl font-bold mb-2">
-                    {activeTab === 'video' ? 'วิดีโอที่แปลแล้ว' : 'วิดีโอต้นฉบับ'}
-                  </h3>
-                  <p className="text-gray-300 mb-4">
-                    {activeTab === 'video' 
-                      ? `แปลจาก ${getLanguageName(result.source_language)} เป็น ${getLanguageName(result.target_language)}`
-                      : 'วิดีโอต้นฉบับก่อนการแปล'
-                    }
-                  </p>
-                  <motion.button
-                    className="px-6 py-2 bg-white/20 hover:bg-white/30 rounded-xl backdrop-blur-sm transition-colors"
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => activeTab === 'video' && result.video_url && window.open(result.video_url, '_blank')}
-                  >
-                    ▶️ เล่น
-                  </motion.button>
-                </div>
-              </motion.div>
-            </AnimatePresence>
-
-            {/* Video Info */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-              <div className="p-3 bg-gray-50/50 rounded-xl">
-                <div className="text-sm text-gray-600">ความยาว</div>
-                <div className="font-bold text-gray-800">{formatDuration(result.original_duration)}</div>
-              </div>
-              <div className="p-3 bg-gray-50/50 rounded-xl">
-                <div className="text-sm text-gray-600">คุณภาพ</div>
-                <div className="font-bold text-gray-800">1080p</div>
-              </div>
-              <div className="p-3 bg-gray-50/50 rounded-xl">
-                <div className="text-sm text-gray-600">ขนาดไฟล์</div>
-                <div className="font-bold text-gray-800">{downloadOptions[0].size}</div>
-              </div>
-              <div className="p-3 bg-gray-50/50 rounded-xl">
-                <div className="text-sm text-gray-600">รูปแบบ</div>
-                <div className="font-bold text-gray-800">MP4</div>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Download Options */}
-        <motion.div
-          className="space-y-6"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.6, delay: 0.6 }}
-        >
-          {/* Download Cards */}
-          <div className="bg-white/80 backdrop-blur-md rounded-3xl shadow-xl border border-white/20 p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
-              <span className="mr-2">📥</span>
-              ดาวน์โหลด
-            </h3>
-            
-            <div className="space-y-4">
-              {downloadOptions.map((option, index) => (
-                <motion.div
-                  key={option.type}
-                  className="group"
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.7 + index * 0.1 }}
-                >
-                  <motion.button
-                    onClick={() => handleDownload(option.type)}
-                    disabled={downloading[option.type]}
-                    className={`w-full p-4 rounded-2xl text-left transition-all duration-300 bg-gradient-to-r ${option.color} text-white hover:shadow-xl group-hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed`}
-                    whileHover={{ scale: downloading[option.type] ? 1 : 1.02 }}
-                    whileTap={{ scale: downloading[option.type] ? 1 : 0.98 }}
-                  >
-                    <div className="flex items-center space-x-4">
-                      <div className="text-3xl">{option.icon}</div>
-                      <div className="flex-1">
-                        <div className="font-bold text-lg">{option.title}</div>
-                        <div className="text-sm opacity-90">{option.description}</div>
-                        <div className="flex items-center space-x-2 mt-1">
-                          <span className="text-xs bg-white/20 px-2 py-1 rounded">{option.format}</span>
-                          <span className="text-xs">{option.size}</span>
-                        </div>
-                      </div>
-                      {downloading[option.type] ? (
-                        <div className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      ) : (
-                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                      )}
+                  {downloading[option.type] ? (
+                    <div className="flex items-center justify-center">
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      กำลังดาวน์โหลด...
                     </div>
-                  </motion.button>
-                </motion.div>
-              ))}
-            </div>
-          </div>
+                  ) : (
+                    'ดาวน์โหลด'
+                  )}
+                </button>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
 
-          {/* Quick Actions */}
-          <div className="bg-white/80 backdrop-blur-md rounded-3xl shadow-xl border border-white/20 p-6">
-            <h3 className="text-lg font-bold text-gray-800 mb-4">การกระทำเพิ่มเติม</h3>
-            
-            <div className="space-y-3">
-              <motion.button
-                onClick={handleShare}
-                className="w-full flex items-center space-x-3 p-3 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <span className="text-2xl">🔗</span>
-                <div className="text-left">
-                  <div className="font-medium text-blue-800">แชร์ผลลัพธ์</div>
-                  <div className="text-sm text-blue-600">สร้างลิงก์สำหรับแชร์</div>
-                </div>
-              </motion.button>
-
-              <motion.button
-                className="w-full flex items-center space-x-3 p-3 bg-purple-50 hover:bg-purple-100 rounded-xl transition-colors"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-              >
-                <span className="text-2xl">📊</span>
-                <div className="text-left">
-                  <div className="font-medium text-purple-800">ดูรายละเอียด</div>
-                  <div className="text-sm text-purple-600">สถิติการแปลและคุณภาพ</div>
-                </div>
-              </motion.button>
-            </div>
-          </div>
-
-          {/* Reset Button */}
-          <motion.button
-            onClick={onReset}
-            className="w-full p-4 bg-gray-100 hover:bg-gray-200 rounded-2xl transition-colors font-medium text-gray-700"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            🔄 แปลวิดีโอใหม่
-          </motion.button>
-        </motion.div>
+      {/* Action Buttons */}
+      <div className="flex flex-col sm:flex-row gap-4 justify-center">
+        <button
+          onClick={handleShare}
+          className="px-6 py-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-colors duration-200 flex items-center justify-center"
+        >
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+          </svg>
+          แชร์ลิงก์
+        </button>
+        
+        <button
+          onClick={onReset}
+          className="px-6 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-xl font-medium transition-colors duration-200 flex items-center justify-center"
+        >
+          <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+          </svg>
+          แปลวิดีโอใหม่
+        </button>
       </div>
 
       {/* Share Modal */}
       <AnimatePresence>
         {showShareModal && (
           <motion.div
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
             onClick={() => setShowShareModal(false)}
           >
             <motion.div
-              className="bg-white rounded-3xl p-8 max-w-md w-full"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl p-6 max-w-md w-full mx-4"
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 className="text-xl font-bold text-gray-800 mb-4">แชร์ผลลัพธ์</h3>
-              <p className="text-gray-600 mb-6">
-                สร้างลิงก์สำหรับแชร์ผลลัพธ์การแปลกับผู้อื่น
-              </p>
-              
-              {shareLink && (
-                <div className="mb-4 p-3 bg-gray-50 rounded-xl">
-                  <div className="text-sm text-gray-600 mb-1">ลิงก์แชร์:</div>
-                  <div className="text-sm font-mono text-gray-800 break-all">{shareLink}</div>
-                </div>
-              )}
-              
-              <div className="space-y-4">
-                <button 
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">แชร์ลิงก์</h3>
+              <div className="bg-gray-100 rounded-lg p-3 mb-4">
+                <input
+                  type="text"
+                  value={shareLink}
+                  readOnly
+                  className="w-full bg-transparent text-sm text-gray-600"
+                />
+              </div>
+              <div className="flex gap-2">
+                <button
                   onClick={() => copyToClipboard(shareLink)}
-                  className="w-full p-3 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors"
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors duration-200"
                 >
-                  📱 คัดลอกลิงก์
+                  คัดลอกลิงก์
                 </button>
-                <button className="w-full p-3 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-colors">
-                  💬 แชร์ผ่าน LINE
-                </button>
-                <button className="w-full p-3 bg-gray-500 text-white rounded-xl hover:bg-gray-600 transition-colors">
-                  📧 ส่งทางอีเมล
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors duration-200"
+                >
+                  ปิด
                 </button>
               </div>
-              
-              <button
-                onClick={() => setShowShareModal(false)}
-                className="w-full mt-4 p-3 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 transition-colors"
-              >
-                ปิด
-              </button>
             </motion.div>
           </motion.div>
         )}
