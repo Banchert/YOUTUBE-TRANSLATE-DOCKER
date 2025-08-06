@@ -1,34 +1,52 @@
-FROM pytorch/pytorch:2.1.0-cuda11.8-cudnn8-runtime
+# Use Python 3.11 slim image for better performance
+FROM python:3.11-slim
 
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    WHISPER_CACHE_DIR=/root/.cache/whisper
+
+# Set work directory
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    git \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    wget \
+    git \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Install Python dependencies
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Install OpenAI Whisper
-RUN pip install openai-whisper
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create necessary directories and set permissions
-RUN mkdir -p /app/uploads /app/temp && \
-    chmod -R 777 /app/uploads /app/temp
+# Create necessary directories
+RUN mkdir -p uploads logs temp
+
+# Download base Whisper model for faster startup
+RUN python -c "import whisper; whisper.load_model('base')"
+
+# Create non-root user for security
+RUN groupadd -r appuser && useradd -r -g appuser appuser && \
+    chown -R appuser:appuser /app /root/.cache
+USER appuser
 
 # Expose port
 EXPOSE 5001
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5001/health || exit 1
 
-# Start the service
+# Run the application
 CMD ["python", "whisper_server.py"]

@@ -2,7 +2,7 @@
 import os
 import tempfile
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 import requests
@@ -52,16 +52,25 @@ def get_whisper_model():
             whisper_model = "api_only"
     return whisper_model
 
-def transcribe_with_api(audio_path):
-    """Transcribe using external API as fallback"""
+def transcribe_with_api(audio_path, language=None):
+    """Transcribe using external API as fallback with language support"""
     try:
         # This is a placeholder for external API integration
         # You can integrate with OpenAI Whisper API, Google Speech-to-Text, etc.
         
+        # Log language preference
+        if language and language != "auto":
+            logger.info(f"🎯 API transcription with forced language: {language}")
+        else:
+            logger.info("🔍 API transcription with auto language detection")
+        
         # For demo purposes, return mock transcription
+        # In real implementation, you would pass language parameter to the API
+        mock_language = language if language and language != "auto" else "th"
+        
         return {
             "text": "สวัสดีครับ นี่คือการแปลงเสียงเป็นข้อความแบบจำลอง",
-            "language": "th",
+            "language": mock_language,
             "segments": [
                 {
                     "start": 0.0,
@@ -97,8 +106,12 @@ async def health_check():
     }
 
 @app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...), use_gpu: Optional[bool] = True):
-    """Transcribe audio file to text"""
+async def transcribe_audio(
+    file: UploadFile = File(...), 
+    use_gpu: Optional[bool] = Form(True),
+    language: Optional[str] = Form(None)
+):
+    """Transcribe audio file to text with optional language forcing"""
     try:
         # Save uploaded file temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_file:
@@ -106,20 +119,31 @@ async def transcribe_audio(file: UploadFile = File(...), use_gpu: Optional[bool]
             temp_file.write(content)
             temp_path = temp_file.name
 
-        logger.info(f"Transcribing audio file: {file.filename} (GPU: {use_gpu})")
+        # Log transcription request with language info
+        lang_info = f"forced language: {language}" if language and language != "auto" else "auto-detect"
+        logger.info(f"Transcribing audio file: {file.filename} (GPU: {use_gpu}, {lang_info})")
         
         # Get model
         model = get_whisper_model()
         
         if model == "api_only":
             # Use external API
-            result = transcribe_with_api(temp_path)
+            result = transcribe_with_api(temp_path, language)
         else:
-            # Use local Whisper model
+            # Use local Whisper model with language forcing
             device = "cuda" if use_gpu and torch.cuda.is_available() else "cpu"
             if device != model.device:
                 model = model.to(device)
-            result = model.transcribe(temp_path)
+            
+            # Apply language forcing if specified
+            transcribe_options = {}
+            if language and language != "auto":
+                transcribe_options["language"] = language
+                logger.info(f"🎯 Forcing Whisper to use language: {language}")
+            else:
+                logger.info("🔍 Using Whisper auto language detection")
+            
+            result = model.transcribe(temp_path, **transcribe_options)
         
         # Clean up temporary file
         os.unlink(temp_path)

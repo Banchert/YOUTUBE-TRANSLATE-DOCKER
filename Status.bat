@@ -1,103 +1,73 @@
 @echo off
 chcp 65001 >nul
-
 echo.
-echo ==========================================
-echo    สถานะ YouTube Video Translator
-echo ==========================================
+echo ========================================
+echo    YouTube Video Translator Status
+echo ========================================
 echo.
 
-echo [INFO] ตรวจสอบ Docker...
+:: Check if Docker is running
 docker info >nul 2>&1
-if %errorLevel% neq 0 (
-    echo [ERROR] Docker ไม่ได้เริ่มต้นการทำงาน
-    goto :docker_error
+if %errorlevel% neq 0 (
+    echo [31m✗ Docker ไม่ทำงาน[0m
+    echo กรุณาเริ่ม Docker Desktop ก่อน
+    pause
+    exit /b 1
 )
 
-echo [SUCCESS] Docker กำลังทำงาน
+echo [32m✓ Docker ทำงานปกติ[0m
 echo.
 
-echo สถานะ Containers:
-echo ==================
-cd docker
-
-:: ตรวจสอบว่าใช้ docker-compose.yml หรือ docker-compose-simple.yml
-docker compose -f docker-compose.yml ps >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [INFO] ใช้การตั้งค่าแบบเต็ม (Full Setup)
-    set "COMPOSE_FILE=docker-compose.yml"
-    set "FULL_SETUP=true"
-) else (
-    echo [INFO] ใช้การตั้งค่าแบบง่าย (Simple Setup)
-    set "COMPOSE_FILE=docker-compose-simple.yml"
-    set "FULL_SETUP=false"
-)
-
-docker compose -f %COMPOSE_FILE% ps
-
-cd ..
-echo.
-
-echo สถานะบริการ:
+:: Check Docker containers
+echo ตรวจสอบ Services:
 echo =============
 
-:: ตรวจสอบ Backend
-echo | set /p="Backend API:       "
-curl -f http://localhost:8000/health >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
+:: Check Backend API
+docker exec docker-backend-1 curl -f http://localhost:8000/health >nul 2>&1
+if %errorlevel% equ 0 (
+    echo Backend API:       [32m✓ ทำงานปกติ[0m
 ) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+    echo Backend API:       [31m✗ ไม่ตอบสนอง[0m
 )
 
-:: ตรวจสอบ Frontend
-echo | set /p="Frontend:          "
-curl -f http://localhost:3000 >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
+:: Check Frontend
+docker exec docker-frontend-1 curl -f http://localhost:80 >nul 2>&1
+if %errorlevel% equ 0 (
+    echo Frontend:          [32m✓ ทำงานปกติ[0m
 ) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+    echo Frontend:          [31m✗ ไม่ตอบสนอง[0m
 )
 
-:: ตรวจสอบ Translation Service
-echo | set /p="Translation API:   "
-timeout /t 1 /nobreak >nul 2>&1
-powershell -Command "Test-NetConnection -ComputerName localhost -Port 5000 -InformationLevel Quiet" >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
+:: Check Translation API (LibreTranslate)
+powershell -Command "try { Invoke-WebRequest -Uri http://localhost:5000/languages -UseBasicParsing -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }" >nul 2>&1
+if %errorlevel% equ 0 (
+    echo Translation API:   [32m✓ ทำงานปกติ[0m
 ) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+    echo Translation API:   [31m✗ ไม่ตอบสนอง[0m
 )
 
-:: ตรวจสอบ Whisper Service (เฉพาะ Full Setup)
-if "%FULL_SETUP%"=="true" (
-    echo | set /p="Whisper Service:   "
-    curl -f http://localhost:5001/health >nul 2>&1
-    if %errorLevel% equ 0 (
-        echo [32m✓ ทำงานปกติ[0m
-    ) else (
-        echo [31m✗ ไม่ตอบสนอง[0m
-    )
-)
-
-:: ตรวจสอบ TTS Service (เฉพาะ Full Setup)
-if "%FULL_SETUP%"=="true" (
-    echo | set /p="TTS Service:       "
-    curl -f http://localhost:5002/health >nul 2>&1
-    if %errorLevel% equ 0 (
-        echo [32m✓ ทำงานปกติ[0m
-    ) else (
-        echo [31m✗ ไม่ตอบสนอง[0m
-    )
-)
-
-:: ตรวจสอบ Redis (ใช้ redis-cli แทน curl)
-echo | set /p="Redis:             "
+:: Check Redis
 docker exec docker-redis-1 redis-cli ping >nul 2>&1
-if %errorLevel% equ 0 (
-    echo [32m✓ ทำงานปกติ[0m
+if %errorlevel% equ 0 (
+    echo Redis:             [32m✓ ทำงานปกติ[0m
 ) else (
-    echo [31m✗ ไม่ตอบสนอง[0m
+    echo Redis:             [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: Check Whisper Service
+docker exec docker-whisper-service-1 curl -f http://localhost:5001/health >nul 2>&1
+if %errorlevel% equ 0 (
+    echo Whisper Service:   [32m✓ ทำงานปกติ[0m
+) else (
+    echo Whisper Service:   [31m✗ ไม่ตอบสนอง[0m
+)
+
+:: Check TTS Service
+docker exec docker-tts-service-1 curl -f http://localhost:5002/health >nul 2>&1
+if %errorlevel% equ 0 (
+    echo TTS Service:       [32m✓ ทำงานปกติ[0m
+) else (
+    echo TTS Service:       [31m✗ ไม่ตอบสนอง[0m
 )
 
 echo.
@@ -106,19 +76,11 @@ echo =========
 echo   Frontend:           http://localhost:3000
 echo   API Documentation:  http://localhost:8000/docs
 echo   Translation API:    http://localhost:5000
-echo   Celery Monitor:     http://localhost:5555
+echo   Whisper Service:    http://localhost:5001
+echo   TTS Service:        http://localhost:5002
+echo   Redis:              localhost:6379
+echo   PostgreSQL:         localhost:5432
 echo.
 
-goto :end
-
-:docker_error
-echo [ERROR] Docker ไม่ได้เริ่มต้นการทำงาน
-echo.
-echo วิธีแก้ไข:
-echo 1. เปิด Docker Desktop
-echo 2. รอให้ Docker เริ่มต้นการทำงาน (ดูไอคอนใน system tray)
-echo 3. รันสคริปต์นี้อีกครั้ง
-echo.
-
-:end
-pause
+echo Press any key to continue . . .
+pause >nul

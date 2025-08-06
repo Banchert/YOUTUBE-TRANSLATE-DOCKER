@@ -1,43 +1,50 @@
-# Dockerfile for Frontend - Optimized for Development
+# Build stage
 FROM node:18-alpine AS builder
 
+# Set environment variables
+ENV NODE_ENV=production \
+    NPM_CONFIG_CACHE=/tmp/npm-cache
+
+# Set work directory
 WORKDIR /app
 
-# Copy package files first (for better caching)
+# Copy package files
 COPY package*.json ./
 
-# Install all dependencies (including dev dependencies)
-RUN npm ci
+# Install dependencies with cache optimization
+RUN npm ci --only=production --cache /tmp/npm-cache && \
+    npm cache clean --force
 
 # Copy source code
 COPY . .
 
-# Build the app with production optimization
+# Build the application
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM nginx:1.25-alpine
 
 # Install curl for health checks
 RUN apk add --no-cache curl
 
-# Copy build files to nginx
+# Copy built application
 COPY --from=builder /app/build /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Create health check script
-RUN echo '#!/bin/sh' > /healthcheck.sh && \
-    echo 'curl -f http://localhost/ || exit 1' >> /healthcheck.sh && \
-    chmod +x /healthcheck.sh
+# Set proper permissions for nginx files
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
+    chown -R nginx:nginx /var/cache/nginx && \
+    chown -R nginx:nginx /var/log/nginx && \
+    chown -R nginx:nginx /etc/nginx/conf.d
 
 # Expose port
 EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD /healthcheck.sh
+    CMD curl -f http://localhost:80 || exit 1
 
-# Start nginx
+# Start nginx (run as root to avoid permission issues)
 CMD ["nginx", "-g", "daemon off;"]
